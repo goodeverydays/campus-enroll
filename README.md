@@ -4,7 +4,7 @@
 旧教务系统继续持有身份、学籍和成绩等既有能力，CampusEnroll 独立承担课程查询与
 选课链路，并通过 SSO / Token 与 REST API 集成。
 
-> 当前状态：Phase 1 基础架构。此版本只有可启动的服务壳、服务注册、路由、
+> 当前状态：Phase 1.1 运行验证。此版本只有可启动的服务壳、服务注册、路由、
 > OpenAPI、基础设施和数据库 Schema；没有 Redis Lua、RabbitMQ 生产/消费、JWT
 > 或真实选课业务。
 
@@ -37,10 +37,14 @@ campus-enroll/
 │  ├─ course-service/              # 课程与开课信息（仅骨架）
 │  ├─ enrollment-service/          # 选课请求入口（仅骨架）
 │  └─ enrollment-worker/           # 异步落库进程（仅骨架）
-├─ infrastructure/mysql/init/      # 首次建库 Schema
+├─ infrastructure/mysql/init/      # 首次建库与授权
+├─ scripts/                         # 本地烟雾与恢复验证
+├─ .github/workflows/               # 持续集成
+├─ .mvn/wrapper/                    # 固定 Maven 发行版
 ├─ docs/                           # API 与数据库边界说明
 ├─ compose.yaml
 ├─ Dockerfile                      # 六个服务共用的多阶段构建文件
+├─ mvnw / mvnw.cmd                 # Maven Wrapper 3.3.4
 └─ pom.xml                         # Maven 聚合父项目
 ```
 
@@ -57,12 +61,15 @@ PowerShell：
 ```powershell
 Copy-Item .env.example .env
 # 打开 .env，把所有 replace_this_* 示例值改成仅供本机开发的强密码
+.\mvnw.cmd clean verify
 docker compose config
 docker compose up -d --build
 docker compose ps
+.\scripts\verify-phase1.ps1
 ```
 
-所有映射端口默认只绑定 `127.0.0.1`。如确实需要局域网访问，可在 `.env` 中显式
+所有映射端口默认只绑定 `127.0.0.1`，并使用独立的宿主机端口以避免常见开发服务冲突。
+如确实需要局域网访问，可在 `.env` 中显式
 设置 `BIND_ADDRESS`，同时补充防火墙和鉴权策略。Nacos 在本地 Compose 中关闭
 鉴权，因此不得将其暴露到公网。
 
@@ -70,9 +77,9 @@ docker compose ps
 
 | Purpose | URL |
 | --- | --- |
-| Gateway | `http://localhost:8080` |
+| Gateway | `http://localhost:18000` |
 | Nacos console | `http://localhost:18080` |
-| RabbitMQ management | `http://localhost:15672` |
+| RabbitMQ management | `http://localhost:25673` |
 | Auth Swagger | `http://localhost:18081/swagger-ui.html` |
 | Student Swagger | `http://localhost:18082/swagger-ui.html` |
 | Course Swagger | `http://localhost:18083/swagger-ui.html` |
@@ -81,21 +88,21 @@ docker compose ps
 服务健康检查示例：
 
 ```powershell
-Invoke-RestMethod http://localhost:8080/actuator/health
+Invoke-RestMethod http://localhost:18000/actuator/health
 Invoke-RestMethod http://localhost:18083/actuator/health
 Invoke-RestMethod http://localhost:18083/internal/info
 ```
 
 ## 仅构建后端
 
-需要 JDK 21 和 Maven 3.6.3+：
+需要 JDK 21；Maven 由 Wrapper 固定为 3.9.16：
 
 ```powershell
-mvn clean verify
+.\mvnw.cmd clean verify
 ```
 
-当前工程尚未提交 Maven Wrapper；在确定团队使用的 Maven 发行版本后再加入，避免
-把未经验证的二进制直接写入仓库。
+Wrapper 使用 Apache 官方 `only-script` 发行方式，不在仓库中提交 Wrapper JAR，
+并通过 `distributionSha256Sum` 校验下载的 Maven 发行包。
 
 ## 数据库边界
 
@@ -103,8 +110,15 @@ mvn clean verify
 `campus_course`、`campus_enrollment`。每张表只有一个服务所有者，跨服务引用只保存
 ID，不创建跨库外键。详细设计见 [docs/database-design.md](docs/database-design.md)。
 
-初始化 SQL 仅在 `mysql-data` 卷第一次创建时执行。修改 Schema 后若需保留数据，
-应使用迁移工具；不要通过删除卷来模拟迁移。
+Compose 初始化 SQL 仅负责创建数据库和授权。各服务通过自己的 Flyway 迁移维护表：
+
+- `auth-service`: `V1__create_auth_schema.sql`
+- `student-service`: `V1__create_student_schema.sql`
+- `course-service`: `V1__create_course_schema.sql`
+- `enrollment-service`: `V1__create_enrollment_schema.sql`
+
+已经执行过的迁移文件不可修改；后续变更必须新增更高版本迁移。`baseline-on-migrate`
+仅用于兼容 Phase 1 早期创建的本地数据库卷。
 
 ## Gateway 路由
 
@@ -117,9 +131,18 @@ Gateway 通过 Nacos 和 `lb://` 服务名转发下列边界：
 | `/api/v1/courses/**` | course-service |
 | `/api/v1/enrollments/**` | enrollment-service |
 | `/api/v1/enrollment-requests/**` | enrollment-service |
+| `/_internal/smoke/course` | course-service `/internal/info` |
 
 这些路由已经声明，但业务 Controller 将在后续阶段实现。完整约定见
 [docs/api-conventions.md](docs/api-conventions.md)。
+
+需要验证基础设施重启恢复时运行：
+
+```powershell
+.\scripts\verify-phase1.ps1 -IncludeRecovery
+```
+
+该参数会依次重启 MySQL、Redis、RabbitMQ 和 Nacos，只应用于本地开发环境。
 
 ## 停止环境
 

@@ -13,6 +13,12 @@ spring:
       server:
         webflux:
           routes:
+            - id: course-service-smoke
+              uri: lb://course-service
+              predicates:
+                - Path=/_internal/smoke/course
+              filters:
+                - SetPath=/internal/info
             - id: auth-service
               uri: lb://auth-service
               predicates:

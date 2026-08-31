@@ -34,7 +34,7 @@ services:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_0900_ai_ci
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:3306:3306"
+      - "${BIND_ADDRESS:-127.0.0.1}:${MYSQL_HOST_PORT:-13306}:3306"
     volumes:
       - mysql-data:/var/lib/mysql
       - ./infrastructure/mysql/init:/docker-entrypoint-initdb.d:ro
@@ -54,7 +54,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
     command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:6379:6379"
+      - "${BIND_ADDRESS:-127.0.0.1}:${REDIS_HOST_PORT:-16379}:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -73,8 +73,8 @@ services:
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
       RABBITMQ_DEFAULT_VHOST: /campus-enroll
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:5672:5672"
-      - "${BIND_ADDRESS:-127.0.0.1}:15672:15672"
+      - "${BIND_ADDRESS:-127.0.0.1}:${RABBITMQ_HOST_PORT:-25672}:5672"
+      - "${BIND_ADDRESS:-127.0.0.1}:${RABBITMQ_MANAGEMENT_HOST_PORT:-25673}:15672"
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     healthcheck:
@@ -96,9 +96,9 @@ services:
       NACOS_AUTH_IDENTITY_KEY: campus-enroll-server
       NACOS_AUTH_IDENTITY_VALUE: ${NACOS_AUTH_IDENTITY_VALUE:?Set NACOS_AUTH_IDENTITY_VALUE in .env}
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:8848:8848"
-      - "${BIND_ADDRESS:-127.0.0.1}:9848:9848"
-      - "${BIND_ADDRESS:-127.0.0.1}:18080:8080"
+      - "${BIND_ADDRESS:-127.0.0.1}:${NACOS_HTTP_HOST_PORT:-18848}:8848"
+      - "${BIND_ADDRESS:-127.0.0.1}:${NACOS_GRPC_HOST_PORT:-19848}:9848"
+      - "${BIND_ADDRESS:-127.0.0.1}:${NACOS_CONSOLE_HOST_PORT:-18080}:8080"
     volumes:
       - nacos-data:/home/nacos/data
     healthcheck:
@@ -120,7 +120,7 @@ services:
     environment:
       <<: *app-environment
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:8080:8080"
+      - "${BIND_ADDRESS:-127.0.0.1}:${GATEWAY_HOST_PORT:-18000}:8080"
     depends_on:
       nacos:
         condition: service_healthy
