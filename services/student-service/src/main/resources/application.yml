@@ -34,7 +34,7 @@ management:
 info:
   app:
     name: ${spring.application.name}
-    phase: 1-skeleton
+    phase: 2-query-foundation
 
 springdoc:
   swagger-ui:

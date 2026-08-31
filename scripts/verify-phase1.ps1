@@ -94,7 +94,7 @@ Assert-ServiceHealth
 
 $gatewaySmoke = Wait-JsonEndpoint -Uri "http://localhost:$GatewayHostPort/_internal/smoke/course" -Accept {
     param($body)
-    $body.service -eq 'course-service' -and $body.phase -eq '1-skeleton'
+    $body.service -eq 'course-service'
 }
 Write-Host "ROUTED gateway -> $($gatewaySmoke.service)"
 
