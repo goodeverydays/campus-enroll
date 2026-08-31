@@ -30,18 +30,31 @@ HTTP status codes still describe the transport-level result.
 GET    /api/v1/courses
 GET    /api/v1/courses/{courseId}
 GET    /api/v1/courses/{courseId}/capacity?semesterId={semesterId}
+GET    /api/v1/courses/{courseId}/offerings?semesterId={semesterId}
+GET    /api/v1/course-offerings/{offeringId}
+GET    /api/v1/semesters?status={status}
+GET    /api/v1/teachers/{teacherId}
 GET    /internal/v1/students/{studentId}
 GET    /internal/v1/students/{studentId}/enrollment-eligibility
+PUT    /internal/v1/students/legacy/{legacyStudentId}
 ```
 
 `GET /api/v1/courses` accepts optional `keyword` and `semesterId` filters plus
 zero-based `page` and `size` pagination. `size` is limited to 1-100. Course
 capacity is aggregated across non-cancelled offerings for one required semester.
+Offering detail includes its teacher and ordered weekly schedule. Semester status
+may be `PLANNED`, `ENROLLMENT_OPEN`, `IN_PROGRESS`, or `CLOSED`.
 
 The student endpoints are internal service contracts and are intentionally not
 routed through Gateway. The public `GET /api/v1/students/me` contract remains
 deferred until Auth Service can supply a verified JWT identity; clients must
 never choose their own student ID.
+
+The legacy synchronization endpoint is idempotent. Department, major, and
+student data are updated in one transaction. `legacyStudentId` and `studentNo`
+are both identity keys; when they resolve to different existing rows the service
+returns `40900` instead of overwriting either student. The endpoint is internal
+and must receive system-to-system authentication before production exposure.
 
 ## Planned Phase 3 endpoints
 
@@ -61,6 +74,7 @@ Enrollment behavior is not implemented in Phase 2.
 | --- | --- | --- |
 | `40000` | 400 | Invalid path, query, or request parameter |
 | `40400` | 404 | Requested student or course does not exist |
+| `40900` | 409 | Legacy student identity keys conflict |
 | `50000` | 500 | Unexpected internal failure; details stay in server logs |
 
 Every response returns `X-Request-Id` as both a header and body field. A safe

@@ -4,9 +4,9 @@
 旧教务系统继续持有身份、学籍和成绩等既有能力，CampusEnroll 独立承担课程查询与
 选课链路，并通过 SSO / Token 与 REST API 集成。
 
-> 当前状态：Phase 2 课程与学生查询基础。课程只读 API、学生内部资料/资格查询、
-> 统一响应与错误结构已经可运行；仍没有 Redis Lua、RabbitMQ 生产/消费、JWT 或
-> 真实选课业务。
+> 当前状态：Phase 2 课程与学生基础业务。课程、学期、教师、开课班和课表只读
+> API，以及学生内部资料、资格和旧系统幂等同步已经可运行；仍没有 Redis Lua、
+> RabbitMQ 生产/消费、JWT 或真实选课业务。
 
 ## 技术基线
 
@@ -33,8 +33,8 @@ campus-enroll/
 ├─ services/
 │  ├─ gateway-service/             # 外部 API 唯一入口与静态路由
 │  ├─ auth-service/                # SSO / JWT 边界（仅骨架）
-│  ├─ student-service/             # 学生资料与内部选课资格查询
-│  ├─ course-service/              # 课程目录、详情与学期容量查询
+│  ├─ student-service/             # 学生资料、资格与旧系统幂等同步
+│  ├─ course-service/              # 课程、学期、教师、开课班与课表查询
 │  ├─ enrollment-service/          # 选课请求入口（仅骨架）
 │  └─ enrollment-worker/           # 异步落库进程（仅骨架）
 ├─ infrastructure/mysql/init/      # 首次建库与授权
@@ -129,12 +129,15 @@ Gateway 通过 Nacos 和 `lb://` 服务名转发下列边界：
 | `/api/v1/auth/**` | auth-service |
 | `/api/v1/students/**` | student-service |
 | `/api/v1/courses/**` | course-service |
+| `/api/v1/semesters/**` | course-service |
+| `/api/v1/teachers/**` | course-service |
+| `/api/v1/course-offerings/**` | course-service |
 | `/api/v1/enrollments/**` | enrollment-service |
 | `/api/v1/enrollment-requests/**` | enrollment-service |
 | `/_internal/smoke/course` | course-service `/internal/info` |
 
-课程路由已经连接真实查询 Controller。学生内部资料与资格接口不经过 Gateway；公开
-`/api/v1/students/me` 将在 JWT 身份边界完成后开放。完整约定见
+课程目录路由已经连接真实查询 Controller。学生内部资料、资格和旧系统同步接口不经过
+Gateway；公开 `/api/v1/students/me` 将在 JWT 身份边界完成后开放。完整约定见
 [docs/api-conventions.md](docs/api-conventions.md)。
 
 Phase 2 查询接口验证：
@@ -143,7 +146,7 @@ Phase 2 查询接口验证：
 .\scripts\verify-phase2.ps1
 ```
 
-该脚本验证 Gateway 课程列表、统一 400/404 错误、内部学生契约和 OpenAPI 路径。
+该脚本验证 Gateway 课程目录、统一 400/404 错误、内部学生同步校验和 OpenAPI 路径。
 
 需要验证基础设施重启恢复时运行：
 

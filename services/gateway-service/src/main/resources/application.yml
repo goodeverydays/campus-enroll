@@ -30,7 +30,7 @@ spring:
             - id: course-service
               uri: lb://course-service
               predicates:
-                - Path=/api/v1/courses/**
+                - Path=/api/v1/courses/**,/api/v1/semesters/**,/api/v1/teachers/**,/api/v1/course-offerings/**
             - id: enrollment-service
               uri: lb://enrollment-service
               predicates:
