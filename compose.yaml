@@ -1,0 +1,229 @@
+name: campus-enroll
+
+x-app-environment: &app-environment
+  NACOS_SERVER_ADDR: nacos:8848
+  MYSQL_HOST: mysql
+  MYSQL_PORT: 3306
+  MYSQL_APP_USER: campus_app
+  MYSQL_APP_PASSWORD: ${MYSQL_APP_PASSWORD:?Set MYSQL_APP_PASSWORD in .env}
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+  RABBITMQ_HOST: rabbitmq
+  RABBITMQ_PORT: 5672
+  RABBITMQ_USER: campus_app
+  RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+  RABBITMQ_VHOST: /campus-enroll
+
+x-app-common: &app-common
+  restart: unless-stopped
+  networks:
+    - campus-enroll
+
+services:
+  mysql:
+    image: mysql:8.4.11
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: campus_auth
+      MYSQL_USER: campus_app
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?Set MYSQL_APP_PASSWORD in .env}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./infrastructure/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks:
+      - campus-enroll
+
+  redis:
+    image: redis:7.4.11-alpine3.21
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - campus-enroll
+
+  rabbitmq:
+    image: rabbitmq:4.2.9-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: campus_app
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+      RABBITMQ_DEFAULT_VHOST: /campus-enroll
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:5672:5672"
+      - "${BIND_ADDRESS:-127.0.0.1}:15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks:
+      - campus-enroll
+
+  nacos:
+    image: nacos/nacos-server:v3.0.3
+    restart: unless-stopped
+    environment:
+      MODE: standalone
+      NACOS_AUTH_ENABLE: "false"
+      NACOS_AUTH_TOKEN: ${NACOS_AUTH_TOKEN:?Set NACOS_AUTH_TOKEN in .env}
+      NACOS_AUTH_IDENTITY_KEY: campus-enroll-server
+      NACOS_AUTH_IDENTITY_VALUE: ${NACOS_AUTH_IDENTITY_VALUE:?Set NACOS_AUTH_IDENTITY_VALUE in .env}
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:8848:8848"
+      - "${BIND_ADDRESS:-127.0.0.1}:9848:9848"
+      - "${BIND_ADDRESS:-127.0.0.1}:18080:8080"
+    volumes:
+      - nacos-data:/home/nacos/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8848/nacos/v3/admin/core/state/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    networks:
+      - campus-enroll
+
+  gateway-service:
+    <<: *app-common
+    image: campus-enroll/gateway-service:dev
+    build:
+      context: .
+      args:
+        MODULE: gateway-service
+    environment:
+      <<: *app-environment
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:8080:8080"
+    depends_on:
+      nacos:
+        condition: service_healthy
+
+  auth-service:
+    <<: *app-common
+    image: campus-enroll/auth-service:dev
+    build:
+      context: .
+      args:
+        MODULE: auth-service
+    environment:
+      <<: *app-environment
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:18081:8081"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+
+  student-service:
+    <<: *app-common
+    image: campus-enroll/student-service:dev
+    build:
+      context: .
+      args:
+        MODULE: student-service
+    environment:
+      <<: *app-environment
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:18082:8082"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+
+  course-service:
+    <<: *app-common
+    image: campus-enroll/course-service:dev
+    build:
+      context: .
+      args:
+        MODULE: course-service
+    environment:
+      <<: *app-environment
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:18083:8083"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+
+  enrollment-service:
+    <<: *app-common
+    image: campus-enroll/enrollment-service:dev
+    build:
+      context: .
+      args:
+        MODULE: enrollment-service
+    environment:
+      <<: *app-environment
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:18084:8084"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+
+  enrollment-worker:
+    <<: *app-common
+    image: campus-enroll/enrollment-worker:dev
+    build:
+      context: .
+      args:
+        MODULE: enrollment-worker
+    environment:
+      <<: *app-environment
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:18085:8085"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+
+networks:
+  campus-enroll:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  redis-data:
+  rabbitmq-data:
+  nacos-data:

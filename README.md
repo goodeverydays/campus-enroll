@@ -1,0 +1,145 @@
+# CampusEnroll
+
+面向既有高校教务系统的分布式高并发选课平台。项目以增量式现代化为目标：
+旧教务系统继续持有身份、学籍和成绩等既有能力，CampusEnroll 独立承担课程查询与
+选课链路，并通过 SSO / Token 与 REST API 集成。
+
+> 当前状态：Phase 1 基础架构。此版本只有可启动的服务壳、服务注册、路由、
+> OpenAPI、基础设施和数据库 Schema；没有 Redis Lua、RabbitMQ 生产/消费、JWT
+> 或真实选课业务。
+
+## 技术基线
+
+| Component | Version / line |
+| --- | --- |
+| Java | 21 |
+| Spring Boot | 3.5.0 |
+| Spring Cloud | 2025.0.0 |
+| Spring Cloud Alibaba | 2025.0.0.0 |
+| Nacos | 3.0.3 |
+| MySQL | 8.4 LTS (`8.4.11` image) |
+| Redis | 7.4.11 |
+| RabbitMQ | 4.2.9 Management |
+
+Spring Cloud Alibaba 官方兼容矩阵将 `2025.0.0.0`、Spring Cloud `2025.0.0`
+与 Spring Boot `3.5.0` 配成同一组，并对应 Nacos `3.0.3`，因此 Phase 1 固定
+使用这组版本，不盲目追逐最新版本。
+
+## 目录结构
+
+```text
+campus-enroll/
+├─ frontend/                       # Vue 3 占位；Phase 2 初始化
+├─ services/
+│  ├─ gateway-service/             # 外部 API 唯一入口与静态路由
+│  ├─ auth-service/                # SSO / JWT 边界（仅骨架）
+│  ├─ student-service/             # 学生与选课资格（仅骨架）
+│  ├─ course-service/              # 课程与开课信息（仅骨架）
+│  ├─ enrollment-service/          # 选课请求入口（仅骨架）
+│  └─ enrollment-worker/           # 异步落库进程（仅骨架）
+├─ infrastructure/mysql/init/      # 首次建库 Schema
+├─ docs/                           # API 与数据库边界说明
+├─ compose.yaml
+├─ Dockerfile                      # 六个服务共用的多阶段构建文件
+└─ pom.xml                         # Maven 聚合父项目
+```
+
+模块间不建立 Java 代码依赖。服务通过 REST、后续的消息契约和稳定 ID 协作，避免
+把微服务重新耦合成一个共享类库。
+
+## 快速启动
+
+前置条件：Docker Desktop（含 Compose v2）。首次构建需要访问 Maven Central 和
+Docker Hub。
+
+PowerShell：
+
+```powershell
+Copy-Item .env.example .env
+# 打开 .env，把所有 replace_this_* 示例值改成仅供本机开发的强密码
+docker compose config
+docker compose up -d --build
+docker compose ps
+```
+
+所有映射端口默认只绑定 `127.0.0.1`。如确实需要局域网访问，可在 `.env` 中显式
+设置 `BIND_ADDRESS`，同时补充防火墙和鉴权策略。Nacos 在本地 Compose 中关闭
+鉴权，因此不得将其暴露到公网。
+
+## 本地入口
+
+| Purpose | URL |
+| --- | --- |
+| Gateway | `http://localhost:8080` |
+| Nacos console | `http://localhost:18080` |
+| RabbitMQ management | `http://localhost:15672` |
+| Auth Swagger | `http://localhost:18081/swagger-ui.html` |
+| Student Swagger | `http://localhost:18082/swagger-ui.html` |
+| Course Swagger | `http://localhost:18083/swagger-ui.html` |
+| Enrollment Swagger | `http://localhost:18084/swagger-ui.html` |
+
+服务健康检查示例：
+
+```powershell
+Invoke-RestMethod http://localhost:8080/actuator/health
+Invoke-RestMethod http://localhost:18083/actuator/health
+Invoke-RestMethod http://localhost:18083/internal/info
+```
+
+## 仅构建后端
+
+需要 JDK 21 和 Maven 3.6.3+：
+
+```powershell
+mvn clean verify
+```
+
+当前工程尚未提交 Maven Wrapper；在确定团队使用的 Maven 发行版本后再加入，避免
+把未经验证的二进制直接写入仓库。
+
+## 数据库边界
+
+单个本地 MySQL 实例承载四个逻辑数据库：`campus_auth`、`campus_student`、
+`campus_course`、`campus_enrollment`。每张表只有一个服务所有者，跨服务引用只保存
+ID，不创建跨库外键。详细设计见 [docs/database-design.md](docs/database-design.md)。
+
+初始化 SQL 仅在 `mysql-data` 卷第一次创建时执行。修改 Schema 后若需保留数据，
+应使用迁移工具；不要通过删除卷来模拟迁移。
+
+## Gateway 路由
+
+Gateway 通过 Nacos 和 `lb://` 服务名转发下列边界：
+
+| Path | Target |
+| --- | --- |
+| `/api/v1/auth/**` | auth-service |
+| `/api/v1/students/**` | student-service |
+| `/api/v1/courses/**` | course-service |
+| `/api/v1/enrollments/**` | enrollment-service |
+| `/api/v1/enrollment-requests/**` | enrollment-service |
+
+这些路由已经声明，但业务 Controller 将在后续阶段实现。完整约定见
+[docs/api-conventions.md](docs/api-conventions.md)。
+
+## 停止环境
+
+```powershell
+docker compose down
+```
+
+该命令保留数据库与中间件卷。只有在明确接受丢失本地数据时才使用
+`docker compose down -v`。
+
+## 分阶段路线
+
+1. Phase 1：项目骨架、基础设施、注册发现、路由、Schema、OpenAPI。
+2. Phase 2：课程与学生基础业务、旧系统适配接口。
+3. Phase 3：基于 MySQL 事务的普通选课基线。
+4. Phase 4：Redis 缓存与 Lua 原子预占。
+5. Phase 5：RabbitMQ 异步削峰。
+6. Phase 6：Confirm、ACK、幂等、重试、DLQ 与补偿。
+7. Phase 7：Prometheus/Grafana、压测和实验数据分析。
+
+## License
+
+本项目采用 [MIT License](LICENSE)。
