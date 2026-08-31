@@ -100,13 +100,17 @@ Write-Host "ROUTED gateway -> $($gatewaySmoke.service)"
 
 Assert-NacosRegistrations
 
-$flywayCounts = docker compose exec -T mysql sh -lc 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" -Nse "SELECT table_schema, COUNT(*) FROM information_schema.tables WHERE table_name = '\''flyway_schema_history'\'' AND table_schema LIKE '\''campus_%'\'' GROUP BY table_schema ORDER BY table_schema;"'
+$mysqlUser = (docker compose exec -T mysql printenv MYSQL_USER).Trim()
+$mysqlPassword = (docker compose exec -T mysql printenv MYSQL_PASSWORD).Trim()
+$flywayQuery = "SELECT table_schema, COUNT(*) FROM information_schema.tables WHERE table_name = 'flyway_schema_history' AND table_schema LIKE 'campus_%' GROUP BY table_schema ORDER BY table_schema;"
+$flywayCounts = docker compose exec -T -e "MYSQL_PWD=$mysqlPassword" mysql mysql "--user=$mysqlUser" --batch --skip-column-names "--execute=$flywayQuery"
 if (@($flywayCounts).Count -ne 4) {
     throw "Expected Flyway history in four databases, received: $flywayCounts"
 }
 Write-Host 'FLYWAY four service-owned schemas found'
 
-$redisPing = docker compose exec -T redis sh -lc 'redis-cli -a "$REDIS_PASSWORD" ping 2>/dev/null'
+$redisPassword = (docker compose exec -T redis printenv REDIS_PASSWORD).Trim()
+$redisPing = docker compose exec -T -e "REDISCLI_AUTH=$redisPassword" redis redis-cli --no-auth-warning ping
 if (($redisPing | Select-Object -Last 1).Trim() -ne 'PONG') {
     throw 'Redis authentication check failed.'
 }
