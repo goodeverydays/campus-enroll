@@ -124,6 +124,32 @@ public class JdbcAcademicCatalogRepository implements AcademicCatalogRepository 
                 resultSet.getInt("end_week")));
     }
 
+    @Override
+    public boolean reserveCapacity(long offeringId) {
+        return jdbcTemplate.update("""
+                UPDATE course_offering o
+                JOIN semester s ON s.id = o.semester_id
+                SET o.selected_count = o.selected_count + 1,
+                    o.version = o.version + 1
+                WHERE o.id = :offeringId
+                  AND o.status = 'OPEN'
+                  AND s.status = 'ENROLLMENT_OPEN'
+                  AND CURRENT_TIMESTAMP(3) BETWEEN s.enrollment_starts_at AND s.enrollment_ends_at
+                  AND o.selected_count < o.capacity
+                """, Map.of("offeringId", offeringId)) == 1;
+    }
+
+    @Override
+    public boolean releaseCapacity(long offeringId) {
+        return jdbcTemplate.update("""
+                UPDATE course_offering
+                SET selected_count = selected_count - 1,
+                    version = version + 1
+                WHERE id = :offeringId
+                  AND selected_count > 0
+                """, Map.of("offeringId", offeringId)) == 1;
+    }
+
     private static final RowMapper<CourseOffering> OFFERING_ROW_MAPPER =
             JdbcAcademicCatalogRepository::mapOffering;
 

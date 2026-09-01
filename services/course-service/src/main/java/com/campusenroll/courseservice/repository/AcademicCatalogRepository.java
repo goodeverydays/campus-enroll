@@ -19,4 +19,8 @@ public interface AcademicCatalogRepository {
     Optional<CourseOffering> findOffering(long offeringId);
 
     List<CourseSchedule> findSchedules(long offeringId);
+
+    boolean reserveCapacity(long offeringId);
+
+    boolean releaseCapacity(long offeringId);
 }

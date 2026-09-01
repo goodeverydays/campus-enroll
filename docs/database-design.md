@@ -8,7 +8,7 @@ are owned by one service and must not be read directly by another service.
 | `campus_auth` | auth-service | `legacy_identity`, `sso_ticket` |
 | `campus_student` | student-service | `department`, `major`, `student` |
 | `campus_course` | course-service | `semester`, `teacher`, `course`, `course_offering`, `course_schedule` |
-| `campus_enrollment` | enrollment-service / enrollment-worker | `enrollment_request`, `enrollment` |
+| `campus_enrollment` | enrollment-service / enrollment-worker | `enrollment_request`, `enrollment`, `student_enrollment_lock`, `enrollment_schedule` |
 
 The Compose bootstrap script creates databases and grants only. Schema ownership
 is enforced by Flyway migrations stored with the owning service:
@@ -32,3 +32,17 @@ Phase 1 deployment small.
 The `enrollment` table enforces the business uniqueness rule on
 `(student_id, course_id, semester_id)`. Redis reservations and message-processing
 metadata are intentionally absent until Phases 4-6.
+
+Phase 3 adds `V2__add_transaction_and_idempotency_baseline.sql`. It gives each
+request a student-scoped `idempotency_key`, serializes mutations through one
+`student_enrollment_lock` row, and stores an enrollment-owned schedule snapshot
+for overlap checks. Dropped rows are reactivated instead of inserting a second
+row, so the original uniqueness boundary remains intact.
+
+Course capacity remains owned by Course Service. Its internal capacity endpoint
+uses one conditional MySQL update to increment only an open, in-window offering
+with remaining capacity, and a guarded decrement for drops. Enrollment Service
+never reads or writes `campus_course` directly. Because Phase 3 deliberately uses
+synchronous REST instead of distributed transactions, an HTTP timeout after a
+remote capacity mutation has an ambiguous outcome. Publisher confirms, durable
+processing, reconciliation, and compensation for that boundary belong to Phase 6.

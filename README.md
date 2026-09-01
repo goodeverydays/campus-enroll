@@ -4,10 +4,10 @@
 旧教务系统继续持有身份、学籍和成绩等既有能力，CampusEnroll 独立承担课程查询与
 选课链路，并通过 SSO / Token 与 REST API 集成。
 
-> 当前状态：Phase 2.5 SSO / JWT 身份边界。课程与学生基础业务已经可运行；Auth
-> Service 可签发一次性 SSO 票据并兑换短期 JWT，Gateway 会验证 JWT、清除客户端
-> 伪造的学生身份头并注入可信学生 ID。仍没有 Redis Lua、RabbitMQ 高并发逻辑或
-> 真实选课业务。
+> 当前状态：Phase 3 MySQL 普通选课基线。系统已经支持同步选课、退课、个人选课与
+> 请求状态查询，并用数据库唯一约束、学生级行锁、课表快照及幂等键保护核心业务。
+> Course Service 通过条件更新原子维护容量。仍没有 Redis Lua 或 RabbitMQ 高并发
+> 处理逻辑。
 
 ## 技术基线
 
@@ -36,7 +36,7 @@ campus-enroll/
 │  ├─ auth-service/                # 一次性 SSO 票据、身份映射与 JWT 签发
 │  ├─ student-service/             # 学生资料、资格与旧系统幂等同步
 │  ├─ course-service/              # 课程、学期、教师、开课班与课表查询
-│  ├─ enrollment-service/          # 选课请求入口（仅骨架）
+│  ├─ enrollment-service/          # MySQL 事务选课、退课、幂等与冲突检查
 │  └─ enrollment-worker/           # 异步落库进程（仅骨架）
 ├─ infrastructure/mysql/init/      # 首次建库与授权
 ├─ scripts/                         # 本地烟雾与恢复验证
@@ -160,6 +160,17 @@ Phase 2.5 认证链路验证：
 票据重放拒绝和数据库哈希存储，并在结束时删除本次创建的临时数据。当前 Compose 的
 `LEGACY_SYSTEM_API_KEY` 仅用于本地系统间认证；生产环境应改为 mTLS 或受管的服务身份。
 
+Phase 3 普通选课验证：
+
+```powershell
+.\scripts\verify-phase3.ps1
+```
+
+脚本使用临时学生、课程和学期走完整 JWT 链路，验证同步选课、幂等重放、重复选课、
+课表冲突、退课、再次选课、状态查询、容量计数和数据库唯一性，并在结束时清理测试数据。
+Phase 3 的 `enrollment-service` 只依赖 MySQL 和同步 REST；Redis/RabbitMQ 配置与运行时
+依赖仅保留给 worker，待后续阶段显式接入。
+
 需要验证基础设施重启恢复时运行：
 
 ```powershell
@@ -182,7 +193,7 @@ docker compose down
 1. Phase 1：项目骨架、基础设施、注册发现、路由、Schema、OpenAPI。
 2. Phase 2：课程与学生基础业务、旧系统适配接口。
 3. Phase 2.5：一次性 SSO 票据、短期 JWT 与 Gateway 可信身份边界。
-4. Phase 3：基于 MySQL 事务的普通选课基线。
+4. Phase 3：基于 MySQL 事务的普通选课基线（当前）。
 5. Phase 4：Redis 缓存与 Lua 原子预占。
 6. Phase 5：RabbitMQ 异步削峰。
 7. Phase 6：Confirm、ACK、幂等、重试、DLQ 与补偿。

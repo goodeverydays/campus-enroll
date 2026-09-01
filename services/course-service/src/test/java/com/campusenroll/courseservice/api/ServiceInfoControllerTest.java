@@ -20,7 +20,7 @@ class ServiceInfoControllerTest {
         mockMvc.perform(get("/internal/info"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.service").value("course-service"))
-                .andExpect(jsonPath("$.phase").value("2-query-foundation"))
+                .andExpect(jsonPath("$.phase").value("3-enrollment-baseline"))
                 .andExpect(jsonPath("$.timestamp").isString());
     }
 }

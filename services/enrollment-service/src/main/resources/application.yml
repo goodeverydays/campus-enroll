@@ -45,7 +45,12 @@ management:
 info:
   app:
     name: ${spring.application.name}
-    phase: 1-skeleton
+    phase: 3-enrollment-baseline
+
+campus:
+  clients:
+    student-base-url: ${STUDENT_SERVICE_BASE_URL:http://localhost:8082}
+    course-base-url: ${COURSE_SERVICE_BASE_URL:http://localhost:8083}
 
 springdoc:
   swagger-ui:
