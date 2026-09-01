@@ -119,6 +119,9 @@ services:
         MODULE: gateway-service
     environment:
       <<: *app-environment
+      JWT_SECRET_BASE64: ${JWT_SECRET_BASE64:?Set JWT_SECRET_BASE64 in .env}
+      JWT_ISSUER: ${JWT_ISSUER:-https://campus-enroll.local}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-campus-enroll-api}
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${GATEWAY_HOST_PORT:-18000}:8080"
     depends_on:
@@ -134,6 +137,10 @@ services:
         MODULE: auth-service
     environment:
       <<: *app-environment
+      JWT_SECRET_BASE64: ${JWT_SECRET_BASE64:?Set JWT_SECRET_BASE64 in .env}
+      JWT_ISSUER: ${JWT_ISSUER:-https://campus-enroll.local}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-campus-enroll-api}
+      LEGACY_SYSTEM_API_KEY: ${LEGACY_SYSTEM_API_KEY:?Set LEGACY_SYSTEM_API_KEY in .env}
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:18081:8081"
     depends_on:

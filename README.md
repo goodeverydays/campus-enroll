@@ -4,9 +4,10 @@
 旧教务系统继续持有身份、学籍和成绩等既有能力，CampusEnroll 独立承担课程查询与
 选课链路，并通过 SSO / Token 与 REST API 集成。
 
-> 当前状态：Phase 2 课程与学生基础业务。课程、学期、教师、开课班和课表只读
-> API，以及学生内部资料、资格和旧系统幂等同步已经可运行；仍没有 Redis Lua、
-> RabbitMQ 生产/消费、JWT 或真实选课业务。
+> 当前状态：Phase 2.5 SSO / JWT 身份边界。课程与学生基础业务已经可运行；Auth
+> Service 可签发一次性 SSO 票据并兑换短期 JWT，Gateway 会验证 JWT、清除客户端
+> 伪造的学生身份头并注入可信学生 ID。仍没有 Redis Lua、RabbitMQ 高并发逻辑或
+> 真实选课业务。
 
 ## 技术基线
 
@@ -32,7 +33,7 @@ campus-enroll/
 ├─ frontend/                       # Vue 3 占位；Phase 2 初始化
 ├─ services/
 │  ├─ gateway-service/             # 外部 API 唯一入口与静态路由
-│  ├─ auth-service/                # SSO / JWT 边界（仅骨架）
+│  ├─ auth-service/                # 一次性 SSO 票据、身份映射与 JWT 签发
 │  ├─ student-service/             # 学生资料、资格与旧系统幂等同步
 │  ├─ course-service/              # 课程、学期、教师、开课班与课表查询
 │  ├─ enrollment-service/          # 选课请求入口（仅骨架）
@@ -60,7 +61,7 @@ PowerShell：
 
 ```powershell
 Copy-Item .env.example .env
-# 打开 .env，把所有 replace_this_* 示例值改成仅供本机开发的强密码
+# 打开 .env，把所有 replace_this_* 示例值改成仅供本机开发的强随机值
 .\mvnw.cmd clean verify
 docker compose config
 docker compose up -d --build
@@ -136,8 +137,9 @@ Gateway 通过 Nacos 和 `lb://` 服务名转发下列边界：
 | `/api/v1/enrollment-requests/**` | enrollment-service |
 | `/_internal/smoke/course` | course-service `/internal/info` |
 
-课程目录路由已经连接真实查询 Controller。学生内部资料、资格和旧系统同步接口不经过
-Gateway；公开 `/api/v1/students/me` 将在 JWT 身份边界完成后开放。完整约定见
+课程目录和认证兑换路由已经连接真实 Controller。学生同步与 SSO 票据签发是内部系统
+接口，不经过 Gateway。`GET /api/v1/students/me` 必须携带 Auth Service 签发的 JWT；
+Gateway 不信任客户端传来的 `X-Student-Id`。完整约定见
 [docs/api-conventions.md](docs/api-conventions.md)。
 
 Phase 2 查询接口验证：
@@ -147,6 +149,16 @@ Phase 2 查询接口验证：
 ```
 
 该脚本验证 Gateway 课程目录、统一 400/404 错误、内部学生同步校验和 OpenAPI 路径。
+
+Phase 2.5 认证链路验证：
+
+```powershell
+.\scripts\verify-auth.ps1
+```
+
+脚本验证内部系统密钥、一次性票据、JWT 签名边界、网关统一 401、伪造学生身份头覆盖、
+票据重放拒绝和数据库哈希存储，并在结束时删除本次创建的临时数据。当前 Compose 的
+`LEGACY_SYSTEM_API_KEY` 仅用于本地系统间认证；生产环境应改为 mTLS 或受管的服务身份。
 
 需要验证基础设施重启恢复时运行：
 
@@ -169,11 +181,12 @@ docker compose down
 
 1. Phase 1：项目骨架、基础设施、注册发现、路由、Schema、OpenAPI。
 2. Phase 2：课程与学生基础业务、旧系统适配接口。
-3. Phase 3：基于 MySQL 事务的普通选课基线。
-4. Phase 4：Redis 缓存与 Lua 原子预占。
-5. Phase 5：RabbitMQ 异步削峰。
-6. Phase 6：Confirm、ACK、幂等、重试、DLQ 与补偿。
-7. Phase 7：Prometheus/Grafana、压测和实验数据分析。
+3. Phase 2.5：一次性 SSO 票据、短期 JWT 与 Gateway 可信身份边界。
+4. Phase 3：基于 MySQL 事务的普通选课基线。
+5. Phase 4：Redis 缓存与 Lua 原子预占。
+6. Phase 5：RabbitMQ 异步削峰。
+7. Phase 6：Confirm、ACK、幂等、重试、DLQ 与补偿。
+8. Phase 7：Prometheus/Grafana、压测和实验数据分析。
 
 ## License
 

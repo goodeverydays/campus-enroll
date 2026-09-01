@@ -15,7 +15,7 @@ public class ServiceInfoController {
     public Map<String, Object> info() {
         return Map.of(
                 "service", "auth-service",
-                "phase", "1-skeleton",
+                "phase", "2.5-sso-jwt",
                 "timestamp", Instant.now().toString());
     }
 }

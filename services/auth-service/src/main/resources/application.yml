@@ -34,7 +34,18 @@ management:
 info:
   app:
     name: ${spring.application.name}
-    phase: 1-skeleton
+    phase: 2.5-sso-jwt
+
+campus:
+  security:
+    jwt:
+      secret-base64: ${JWT_SECRET_BASE64}
+      issuer: ${JWT_ISSUER:https://campus-enroll.local}
+      audience: ${JWT_AUDIENCE:campus-enroll-api}
+      ttl-seconds: ${JWT_TTL_SECONDS:900}
+    sso:
+      ticket-ttl-seconds: ${SSO_TICKET_TTL_SECONDS:120}
+      legacy-system-api-key: ${LEGACY_SYSTEM_API_KEY}
 
 springdoc:
   swagger-ui:
