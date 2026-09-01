@@ -29,11 +29,5 @@ foreach ($required in @('REDIS_HOST', 'REDIS_PORT', 'REDIS_PASSWORD')) {
         throw "Enrollment Service is missing required Redis environment variable: $required"
     }
 }
-foreach ($forbidden in @('RABBITMQ_HOST', 'RABBITMQ_PORT', 'RABBITMQ_USER', 'RABBITMQ_PASSWORD', 'RABBITMQ_VHOST')) {
-    if ($forbidden -in $enrollmentEnvironment) {
-        throw "Enrollment Service must not receive RabbitMQ environment variable: $forbidden"
-    }
-}
-
-Write-Host 'BOUNDARY Enrollment Service receives Redis configuration but no RabbitMQ configuration'
+Write-Host 'BOUNDARY Enrollment Service receives the required Redis configuration'
 Write-Host 'Phase 4 Redis Lua reservation verification passed.'

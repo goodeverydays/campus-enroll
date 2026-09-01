@@ -22,6 +22,12 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD}
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:campus_app}
+    password: ${RABBITMQ_PASSWORD}
+    virtual-host: ${RABBITMQ_VHOST:/campus-enroll}
 management:
   endpoints:
     web:
@@ -38,12 +44,16 @@ management:
 info:
   app:
     name: ${spring.application.name}
-    phase: 4-redis-reservation
+    phase: 5-rabbitmq-async
 
 campus:
   clients:
     student-base-url: ${STUDENT_SERVICE_BASE_URL:http://localhost:8082}
     course-base-url: ${COURSE_SERVICE_BASE_URL:http://localhost:8083}
+  messaging:
+    exchange: ${ENROLLMENT_EXCHANGE:campus.enrollment.exchange}
+    queue: ${ENROLLMENT_QUEUE:campus.enrollment.queue}
+    routing-key: ${ENROLLMENT_ROUTING_KEY:campus.enrollment.requested}
 
 springdoc:
   swagger-ui:

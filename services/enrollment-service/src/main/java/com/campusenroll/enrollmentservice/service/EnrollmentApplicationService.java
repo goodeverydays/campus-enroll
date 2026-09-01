@@ -1,5 +1,6 @@
 package com.campusenroll.enrollmentservice.service;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -10,8 +11,11 @@ import com.campusenroll.enrollmentservice.client.EnrollmentCandidate;
 import com.campusenroll.enrollmentservice.client.StudentEligibilityClient;
 import com.campusenroll.enrollmentservice.domain.EnrollmentRecord;
 import com.campusenroll.enrollmentservice.domain.EnrollmentRequestRecord;
+import com.campusenroll.enrollmentservice.messaging.EnrollmentTask;
+import com.campusenroll.enrollmentservice.messaging.RabbitEnrollmentPublisher;
 import com.campusenroll.enrollmentservice.repository.EnrollmentRepository;
 import com.campusenroll.enrollmentservice.support.EnrollmentBusinessException;
+import com.campusenroll.enrollmentservice.support.EnrollmentDependencyException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -26,6 +30,7 @@ public class EnrollmentApplicationService {
     private final StudentEligibilityClient studentClient;
     private final AcademicClient academicClient;
     private final RedisReservationService redisReservationService;
+    private final RabbitEnrollmentPublisher enrollmentPublisher;
     private final TransactionTemplate transactionTemplate;
 
     public EnrollmentApplicationService(
@@ -33,11 +38,13 @@ public class EnrollmentApplicationService {
             StudentEligibilityClient studentClient,
             AcademicClient academicClient,
             RedisReservationService redisReservationService,
+            RabbitEnrollmentPublisher enrollmentPublisher,
             TransactionTemplate transactionTemplate) {
         this.repository = repository;
         this.studentClient = studentClient;
         this.academicClient = academicClient;
         this.redisReservationService = redisReservationService;
+        this.enrollmentPublisher = enrollmentPublisher;
         this.transactionTemplate = transactionTemplate;
     }
 
@@ -45,13 +52,7 @@ public class EnrollmentApplicationService {
         var existing = repository.findRequestByIdempotency(studentId, idempotencyKey);
         if (existing.isPresent()) {
             validateReplay(existing.get(), ENROLL, courseId);
-            if (!"PENDING".equals(existing.get().status())) {
-                return EnrollmentRequestResponse.from(existing.get());
-            }
-            studentClient.requireEligible(studentId);
-            EnrollmentCandidate candidate = academicClient.findOffering(
-                    courseId, existing.get().offeringId());
-            return processEnrollment(existing.get(), candidate);
+            return EnrollmentRequestResponse.from(existing.get());
         }
 
         studentClient.requireEligible(studentId);
@@ -66,10 +67,10 @@ public class EnrollmentApplicationService {
         Registration registration = register(
                 studentId, idempotencyKey, candidate, ENROLL);
         validateReplay(registration.request(), ENROLL, courseId);
-        if (!registration.created() && !"PENDING".equals(registration.request().status())) {
+        if (!registration.created()) {
             return EnrollmentRequestResponse.from(registration.request());
         }
-        return processEnrollment(registration.request(), candidate);
+        return queueEnrollment(registration.request(), candidate);
     }
 
     public EnrollmentRequestResponse drop(long studentId, String idempotencyKey, long courseId) {
@@ -107,7 +108,7 @@ public class EnrollmentApplicationService {
         return EnrollmentRequestResponse.from(request);
     }
 
-    private EnrollmentRequestResponse processEnrollment(
+    private EnrollmentRequestResponse queueEnrollment(
             EnrollmentRequestRecord request,
             EnrollmentCandidate candidate) {
         ProcessingResult result = transactionTemplate.execute(status -> {
@@ -126,32 +127,28 @@ public class EnrollmentApplicationService {
             }
 
             boolean redisReserved = false;
-            boolean capacityReserved = false;
             try {
                 redisReservationService.reserve(
                         candidate, locked.studentId(), locked.requestId());
                 redisReserved = true;
-                academicClient.reserve(locked.offeringId());
-                capacityReserved = true;
-                var previous = repository.findEnrollment(
-                        locked.studentId(), locked.courseId(), locked.semesterId());
-                if (previous.isPresent()) {
-                    repository.reactivateEnrollment(
-                            previous.get().id(), locked.offeringId(), candidate.schedules());
-                } else {
-                    repository.createEnrollment(
-                            locked.studentId(), locked.courseId(), locked.offeringId(),
-                            locked.semesterId(), candidate.schedules());
-                }
-                repository.markRequestSuccess(locked.id());
-                return ProcessingResult.success(reload(locked.requestId()));
+                enrollmentPublisher.publish(new EnrollmentTask(
+                        locked.requestId(),
+                        locked.studentId(),
+                        locked.courseId(),
+                        locked.offeringId(),
+                        locked.semesterId(),
+                        candidate.schedules(),
+                        Instant.now()));
+                return ProcessingResult.success(EnrollmentRequestResponse.from(locked));
             } catch (EnrollmentBusinessException exception) {
-                compensateEnrollment(
-                        locked, redisReserved, capacityReserved, exception);
+                compensateRedisReservation(locked, redisReserved, exception);
                 return fail(locked, exception.code(), exception.getMessage());
+            } catch (EnrollmentDependencyException exception) {
+                compensateRedisReservation(locked, redisReserved, exception);
+                repository.markRequestFailed(locked.id(), 50300, exception.getMessage());
+                return ProcessingResult.failure(reload(locked.requestId()), exception);
             } catch (RuntimeException exception) {
-                compensateEnrollment(
-                        locked, redisReserved, capacityReserved, exception);
+                compensateRedisReservation(locked, redisReserved, exception);
                 throw exception;
             }
         });
@@ -261,18 +258,10 @@ public class EnrollmentApplicationService {
         }
     }
 
-    private void compensateEnrollment(
+    private void compensateRedisReservation(
             EnrollmentRequestRecord request,
             boolean redisReserved,
-            boolean capacityReserved,
             RuntimeException original) {
-        if (capacityReserved) {
-            try {
-                academicClient.release(request.offeringId());
-            } catch (RuntimeException compensationFailure) {
-                original.addSuppressed(compensationFailure);
-            }
-        }
         if (redisReserved) {
             try {
                 redisReservationService.release(
@@ -314,7 +303,7 @@ public class EnrollmentApplicationService {
 
     private record ProcessingResult(
             EnrollmentRequestResponse response,
-            EnrollmentBusinessException failure) {
+            RuntimeException failure) {
 
         private static ProcessingResult success(EnrollmentRequestResponse response) {
             return new ProcessingResult(response, null);
@@ -322,7 +311,7 @@ public class EnrollmentApplicationService {
 
         private static ProcessingResult failure(
                 EnrollmentRequestResponse response,
-                EnrollmentBusinessException failure) {
+                RuntimeException failure) {
             return new ProcessingResult(response, failure);
         }
     }

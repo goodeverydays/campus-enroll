@@ -24,7 +24,7 @@
 `code = 0` means success. Non-zero codes are stable application error codes;
 HTTP status codes still describe the transport-level result.
 
-## Implemented endpoints through Phase 4
+## Implemented endpoints through Phase 5
 
 ```text
 GET    /api/v1/courses
@@ -80,7 +80,7 @@ are both identity keys; when they resolve to different existing rows the service
 returns `40900` instead of overwriting either student. The endpoint is internal
 and must receive system-to-system authentication before production exposure.
 
-## Phase 4 synchronous enrollment with Redis reservation
+## Phase 5 asynchronous enrollment with Redis reservation
 
 `POST /api/v1/enrollments` accepts `{ "courseId": 10001 }`. Student identity is
 never accepted in the body; Gateway supplies it from the verified JWT. Mutating
@@ -88,16 +88,22 @@ requests require an `Idempotency-Key` containing 1-64 safe characters. Replaying
 the same student, key, action, and course returns the original request result;
 reusing the key for a different operation returns `40915`.
 
-Phase 4 completes the MySQL path synchronously and therefore returns `SUCCESS`
-only after the enrollment row and request status commit. Course Service chooses
-the first reported open offering with capacity, then atomically rechecks its
-status, semester window, and capacity during reservation. Enrollment Service
-serializes each student's mutations, rejects duplicate courses and overlapping
-week/day/section ranges, and stores schedule snapshots beside the enrollment.
-`DELETE` releases capacity and marks the row `DROPPED`; a later enrollment
-reactivates that row without bypassing the unique constraint.
+For a newly accepted enrollment, Phase 5 returns HTTP `202 Accepted` with a
+request whose status is `PENDING`. Clients poll
+`GET /api/v1/enrollment-requests/{requestId}` until it becomes `SUCCESS` or
+`FAILED`. An idempotent replay never republishes the task: it returns the current
+state of the original request. A replay after completion returns HTTP `200`.
 
-Before the Course Service capacity mutation, Enrollment Service executes a Lua
+Course Service chooses the first reported open offering with capacity.
+Enrollment Service serializes each student's admission checks, rejects duplicate
+courses and overlapping week/day/section ranges, reserves Redis capacity, then
+publishes one JSON task to RabbitMQ. Enrollment Worker locks the same request and
+student rows, repeats the database-backed conflict guards, atomically rechecks
+Course Service capacity, stores the enrollment and schedule snapshot, and writes
+the final request state. `DELETE` remains synchronous: it releases capacity and
+marks the row `DROPPED`; a later asynchronous enrollment reactivates that row.
+
+Before publishing the task, Enrollment Service executes a Lua
 script against one Hash key per course offering. The script lazily initializes
 the Redis remaining count from the Course Service snapshot, rejects an existing
 student marker, and atomically decrements capacity. Idempotent request replay and
@@ -105,10 +111,17 @@ MySQL duplicate/schedule checks happen before Redis mutation. Drop executes a
 second Lua script that removes the student marker and restores the count. The
 Course Service conditional MySQL update remains the authoritative final guard.
 
-The `PENDING` state is retained for an infrastructure failure whose remote result
-is unknown and for the Phase 5 asynchronous design. Phase 4 uses Redis but does
-not use RabbitMQ. Its synchronous Redis/REST timeout ambiguity is an explicit baseline
-limitation to be addressed by the Phase 6 reliability and compensation work.
+The queue contract carries `requestId`, student/course/offering/semester IDs, an
+immutable schedule snapshot, and submission time. The producer writes a
+persistent JSON body without Java type headers, and the consumer parses it into
+its local record, so the contract does not depend on a shared Java package.
+
+Phase 5 deliberately implements only the basic asynchronous path. The listener
+uses automatic ACK after a successful handler return and rejects unexpected
+failures without requeue. Known dependency/business failures are finalized as
+`FAILED` with best-effort Redis and Course Service compensation. Publish-result
+ambiguity, Publisher Confirm, manual ACK, retry, DLQ, reconciliation and durable
+compensation evidence are explicit Phase 6 work.
 
 ## Stable application errors
 

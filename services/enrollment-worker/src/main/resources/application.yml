@@ -25,6 +25,10 @@ spring:
     username: ${RABBITMQ_USER:campus_app}
     password: ${RABBITMQ_PASSWORD}
     virtual-host: ${RABBITMQ_VHOST:/campus-enroll}
+    listener:
+      simple:
+        acknowledge-mode: auto
+        default-requeue-rejected: false
 
 management:
   endpoints:
@@ -42,4 +46,12 @@ management:
 info:
   app:
     name: ${spring.application.name}
-    phase: 1-skeleton
+    phase: 5-rabbitmq-async
+
+campus:
+  clients:
+    course-base-url: ${COURSE_SERVICE_BASE_URL:http://localhost:8083}
+  messaging:
+    exchange: ${ENROLLMENT_EXCHANGE:campus.enrollment.exchange}
+    queue: ${ENROLLMENT_QUEUE:campus.enrollment.queue}
+    routing-key: ${ENROLLMENT_ROUTING_KEY:campus.enrollment.requested}

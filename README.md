@@ -4,9 +4,9 @@
 旧教务系统继续持有身份、学籍和成绩等既有能力，CampusEnroll 独立承担课程查询与
 选课链路，并通过 SSO / Token 与 REST API 集成。
 
-> 当前状态：Phase 4 Redis Lua 原子预占。系统在 Phase 3 的 MySQL 事务、幂等键、
-> 学生级行锁和 Course Service 容量条件更新之前，增加了 Redis 单键 Lua 预占与释放。
-> RabbitMQ 异步削峰仍未接入，选课请求继续同步返回最终结果。
+> 当前状态：Phase 5 RabbitMQ 基础异步选课。Enrollment Service 完成资格与冲突预检、
+> Redis Lua 原子预占并投递任务，以 HTTP `202` 和 `PENDING` 立即返回；Enrollment
+> Worker 消费任务、执行 Course Service 容量条件更新、写入选课记录并落最终状态。
 
 ## 技术基线
 
@@ -35,8 +35,8 @@ campus-enroll/
 │  ├─ auth-service/                # 一次性 SSO 票据、身份映射与 JWT 签发
 │  ├─ student-service/             # 学生资料、资格与旧系统幂等同步
 │  ├─ course-service/              # 课程、学期、教师、开课班与课表查询
-│  ├─ enrollment-service/          # Redis 原子预占 + MySQL 同步事务选课
-│  └─ enrollment-worker/           # 异步落库进程（仅骨架）
+│  ├─ enrollment-service/          # 资格预检、Redis 原子预占与 RabbitMQ 投递
+│  └─ enrollment-worker/           # 容量扣减、选课落库与请求最终状态
 ├─ infrastructure/mysql/init/      # 首次建库与授权
 ├─ scripts/                         # 本地烟雾与恢复验证
 ├─ .github/workflows/               # 持续集成
@@ -165,10 +165,9 @@ Phase 3 普通选课验证：
 .\scripts\verify-phase3.ps1
 ```
 
-脚本使用临时学生、课程和学期走完整 JWT 链路，验证同步选课、幂等重放、重复选课、
+脚本使用临时学生、课程和学期走完整 JWT 链路，验证选课最终状态、幂等重放、重复选课、
 课表冲突、退课、再次选课、状态查询、容量计数和数据库唯一性，并在结束时清理测试数据。
-该 Phase 3 脚本保留为 MySQL 业务不变量回归；Phase 4 的当前运行时在此同步基线上新增
-Redis 预占，但仍不接入 RabbitMQ。
+该 Phase 3 脚本保留为 MySQL 业务不变量回归，并兼容后续阶段的异步状态轮询。
 
 Phase 4 Redis Lua 预占验证：
 
@@ -177,8 +176,19 @@ Phase 4 Redis Lua 预占验证：
 ```
 
 该脚本复用完整选课链路，并额外检查 Redis 剩余量、学生预占标记、幂等重放不重复扣减、
-退课释放、课表冲突不写 Redis，以及 Enrollment Service 不接收任何 RabbitMQ 配置。
+退课释放和课表冲突不写 Redis。
 Lua 仅操作同一开课班的一个 Hash Key，可直接保持 Redis Cluster 的单槽原子性。
+
+Phase 5 RabbitMQ 异步选课验证：
+
+```powershell
+.\scripts\verify-phase5.ps1
+```
+
+该脚本明确要求首次选课和再次选课返回 HTTP `202` / `PENDING`，随后轮询请求状态直到
+Worker 写入 `SUCCESS`；同时检查 RabbitMQ 队列已清空且存在活动消费者。当前使用自动
+ACK 且不重新入队，Publisher Confirm、手动 ACK、重试、DLQ 和持久化修复记录仍属于
+Phase 6，不能把当前实现视为完整的生产级可靠消息链路。
 
 需要验证基础设施重启恢复时运行：
 
@@ -203,8 +213,8 @@ docker compose down
 2. Phase 2：课程与学生基础业务、旧系统适配接口。
 3. Phase 2.5：一次性 SSO 票据、短期 JWT 与 Gateway 可信身份边界。
 4. Phase 3：基于 MySQL 事务的普通选课基线。
-5. Phase 4：Redis 缓存与 Lua 原子预占（当前）。
-6. Phase 5：RabbitMQ 异步削峰。
+5. Phase 4：Redis 缓存与 Lua 原子预占。
+6. Phase 5：RabbitMQ 基础异步削峰（当前）。
 7. Phase 6：Confirm、ACK、幂等、重试、DLQ 与补偿。
 8. Phase 7：Prometheus/Grafana、压测和实验数据分析。
 

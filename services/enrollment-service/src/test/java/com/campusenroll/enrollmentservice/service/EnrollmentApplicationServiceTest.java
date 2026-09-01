@@ -6,9 +6,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -23,11 +23,15 @@ import com.campusenroll.enrollmentservice.client.EnrollmentCandidate;
 import com.campusenroll.enrollmentservice.client.StudentEligibilityClient;
 import com.campusenroll.enrollmentservice.domain.EnrollmentRecord;
 import com.campusenroll.enrollmentservice.domain.EnrollmentRequestRecord;
+import com.campusenroll.enrollmentservice.messaging.EnrollmentTask;
+import com.campusenroll.enrollmentservice.messaging.RabbitEnrollmentPublisher;
 import com.campusenroll.enrollmentservice.repository.EnrollmentRepository;
 import com.campusenroll.enrollmentservice.support.EnrollmentBusinessException;
+import com.campusenroll.enrollmentservice.support.EnrollmentDependencyException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.TransactionStatus;
@@ -37,20 +41,12 @@ import org.springframework.transaction.support.TransactionTemplate;
 @ExtendWith(MockitoExtension.class)
 class EnrollmentApplicationServiceTest {
 
-    @Mock
-    private EnrollmentRepository repository;
-
-    @Mock
-    private StudentEligibilityClient studentClient;
-
-    @Mock
-    private AcademicClient academicClient;
-
-    @Mock
-    private RedisReservationService redisReservationService;
-
-    @Mock
-    private TransactionTemplate transactionTemplate;
+    @Mock private EnrollmentRepository repository;
+    @Mock private StudentEligibilityClient studentClient;
+    @Mock private AcademicClient academicClient;
+    @Mock private RedisReservationService redisReservationService;
+    @Mock private RabbitEnrollmentPublisher enrollmentPublisher;
+    @Mock private TransactionTemplate transactionTemplate;
 
     private EnrollmentApplicationService service;
 
@@ -63,36 +59,32 @@ class EnrollmentApplicationServiceTest {
             return callback.doInTransaction(transactionStatus);
         });
         service = new EnrollmentApplicationService(
-                repository, studentClient, academicClient, redisReservationService, transactionTemplate);
+                repository, studentClient, academicClient, redisReservationService,
+                enrollmentPublisher, transactionTemplate);
     }
 
     @Test
-    void TestEnrollEligibleStudentPersistsSuccessfulRequest() {
+    void TestEnrollEligibleStudentPublishesPendingTask() {
         EnrollmentCandidate candidate = candidate();
         EnrollmentRequestRecord pending = request("ENROLL", "PENDING", null, null);
-        EnrollmentRequestRecord success = request("ENROLL", "SUCCESS", null, null);
-        when(repository.findRequestByIdempotency(1L, "key-1")).thenReturn(Optional.empty());
-        when(academicClient.findCandidate(20L)).thenReturn(candidate);
-        when(repository.createRequest(anyString(), eq("key-1"), eq(1L), eq(20L), eq(10L), eq(30L), eq("ENROLL")))
-                .thenReturn(pending);
-        when(repository.lockRequest(100L)).thenReturn(Optional.of(pending));
-        when(repository.findActiveEnrollment(1L, 20L)).thenReturn(Optional.empty());
-        when(repository.hasScheduleConflict(1L, 30L, candidate.schedules())).thenReturn(false);
-        when(repository.findEnrollment(1L, 20L, 30L)).thenReturn(Optional.empty());
-        when(repository.findRequestByRequestId("request-1")).thenReturn(Optional.of(success));
+        prepareNewEnrollment(candidate, pending);
 
         var response = service.enroll(1L, "key-1", 20L);
 
-        assertThat(response.status()).isEqualTo("SUCCESS");
+        assertThat(response.status()).isEqualTo("PENDING");
         verify(studentClient).requireEligible(1L);
         verify(redisReservationService).reserve(candidate, 1L, "request-1");
-        verify(academicClient).reserve(10L);
-        verify(repository).createEnrollment(1L, 20L, 10L, 30L, candidate.schedules());
-        verify(repository).markRequestSuccess(100L);
+        ArgumentCaptor<EnrollmentTask> taskCaptor = ArgumentCaptor.forClass(EnrollmentTask.class);
+        verify(enrollmentPublisher).publish(taskCaptor.capture());
+        assertThat(taskCaptor.getValue().requestId()).isEqualTo("request-1");
+        assertThat(taskCaptor.getValue().schedules()).isEqualTo(candidate.schedules());
+        verify(academicClient, never()).reserve(anyLong());
+        verify(repository, never()).createEnrollment(anyLong(), anyLong(), anyLong(), anyLong(), any());
+        verify(repository, never()).markRequestSuccess(anyLong());
     }
 
     @Test
-    void TestDuplicateEnrollmentPersistsFailureWithoutReservingCapacity() {
+    void TestDuplicateEnrollmentPersistsFailureWithoutPublishing() {
         EnrollmentRequestRecord pending = request("ENROLL", "PENDING", null, null);
         EnrollmentRequestRecord failed = request("ENROLL", "FAILED", "40910", "Course is already enrolled");
         when(repository.findRequestByIdempotency(1L, "key-1")).thenReturn(Optional.empty());
@@ -105,13 +97,14 @@ class EnrollmentApplicationServiceTest {
         assertThatThrownBy(() -> service.enroll(1L, "key-1", 20L))
                 .isInstanceOfSatisfying(EnrollmentBusinessException.class,
                         exception -> assertThat(exception.code()).isEqualTo(40910));
+
         verify(repository).markRequestFailed(100L, 40910, "Course is already enrolled");
         verify(redisReservationService, never()).reserve(any(), anyLong(), anyString());
-        verify(academicClient, never()).reserve(anyLong());
+        verify(enrollmentPublisher, never()).publish(any());
     }
 
     @Test
-    void TestScheduleConflictPersistsFailure() {
+    void TestScheduleConflictPersistsFailureWithoutPublishing() {
         EnrollmentCandidate candidate = candidate();
         EnrollmentRequestRecord pending = request("ENROLL", "PENDING", null, null);
         EnrollmentRequestRecord failed = request(
@@ -128,20 +121,23 @@ class EnrollmentApplicationServiceTest {
         assertThatThrownBy(() -> service.enroll(1L, "key-1", 20L))
                 .isInstanceOfSatisfying(EnrollmentBusinessException.class,
                         exception -> assertThat(exception.code()).isEqualTo(40913));
-        verify(academicClient, never()).reserve(anyLong());
+
         verify(redisReservationService, never()).reserve(any(), anyLong(), anyString());
+        verify(enrollmentPublisher, never()).publish(any());
     }
 
     @Test
-    void TestSuccessfulIdempotentReplaySkipsDependencies() {
-        EnrollmentRequestRecord success = request("ENROLL", "SUCCESS", null, null);
-        when(repository.findRequestByIdempotency(1L, "key-1")).thenReturn(Optional.of(success));
+    void TestPendingIdempotentReplaySkipsRepublish() {
+        EnrollmentRequestRecord pending = request("ENROLL", "PENDING", null, null);
+        when(repository.findRequestByIdempotency(1L, "key-1")).thenReturn(Optional.of(pending));
 
         var response = service.enroll(1L, "key-1", 20L);
 
         assertThat(response.requestId()).isEqualTo("request-1");
+        assertThat(response.status()).isEqualTo("PENDING");
         verify(studentClient, never()).requireEligible(anyLong());
         verify(academicClient, never()).findCandidate(anyLong());
+        verify(enrollmentPublisher, never()).publish(any());
     }
 
     @Test
@@ -155,7 +151,25 @@ class EnrollmentApplicationServiceTest {
     }
 
     @Test
-    void TestDropActiveEnrollmentReleasesCapacity() {
+    void TestPublisherFailureReleasesRedisAndPersistsFailure() {
+        EnrollmentCandidate candidate = candidate();
+        EnrollmentRequestRecord pending = request("ENROLL", "PENDING", null, null);
+        EnrollmentRequestRecord failed = request("ENROLL", "FAILED", "50300", "RabbitMQ is unavailable");
+        prepareNewEnrollment(candidate, pending);
+        when(repository.findRequestByRequestId("request-1")).thenReturn(Optional.of(failed));
+        doThrow(new EnrollmentDependencyException("RabbitMQ is unavailable"))
+                .when(enrollmentPublisher).publish(any());
+
+        assertThatThrownBy(() -> service.enroll(1L, "key-1", 20L))
+                .isInstanceOf(EnrollmentDependencyException.class)
+                .hasMessage("RabbitMQ is unavailable");
+
+        verify(redisReservationService).release(20L, 10L, 1L);
+        verify(repository).markRequestFailed(100L, 50300, "RabbitMQ is unavailable");
+    }
+
+    @Test
+    void TestDropActiveEnrollmentRemainsSynchronous() {
         EnrollmentRecord active = enrollment("ENROLLED");
         EnrollmentRequestRecord pending = request("DROP", "PENDING", null, null);
         EnrollmentRequestRecord success = request("DROP", "SUCCESS", null, null);
@@ -172,53 +186,7 @@ class EnrollmentApplicationServiceTest {
         verify(academicClient).release(10L);
         verify(redisReservationService).release(20L, 10L, 1L);
         verify(repository).dropEnrollment(200L);
-    }
-
-    @Test
-    void TestCourseCapacityFailureReleasesRedisReservation() {
-        EnrollmentCandidate candidate = candidate();
-        EnrollmentRequestRecord pending = request("ENROLL", "PENDING", null, null);
-        EnrollmentRequestRecord failed = request("ENROLL", "FAILED", "40911", "Offering is full");
-        when(repository.findRequestByIdempotency(1L, "key-1")).thenReturn(Optional.empty());
-        when(academicClient.findCandidate(20L)).thenReturn(candidate);
-        when(repository.createRequest(anyString(), anyString(), anyLong(), anyLong(), anyLong(), anyLong(), anyString()))
-                .thenReturn(pending);
-        when(repository.lockRequest(100L)).thenReturn(Optional.of(pending));
-        when(repository.findActiveEnrollment(1L, 20L)).thenReturn(Optional.empty());
-        when(repository.hasScheduleConflict(1L, 30L, candidate.schedules())).thenReturn(false);
-        when(repository.findRequestByRequestId("request-1")).thenReturn(Optional.of(failed));
-        doThrow(new EnrollmentBusinessException(40911, "Offering is full"))
-                .when(academicClient).reserve(10L);
-
-        assertThatThrownBy(() -> service.enroll(1L, "key-1", 20L))
-                .isInstanceOfSatisfying(
-                        EnrollmentBusinessException.class,
-                        exception -> assertThat(exception.code()).isEqualTo(40911));
-
-        verify(redisReservationService).release(20L, 10L, 1L);
-        verify(academicClient, never()).release(anyLong());
-    }
-
-    @Test
-    void TestEnrollmentPersistenceFailureCompensatesBothReservations() {
-        EnrollmentCandidate candidate = candidate();
-        EnrollmentRequestRecord pending = request("ENROLL", "PENDING", null, null);
-        when(repository.findRequestByIdempotency(1L, "key-1")).thenReturn(Optional.empty());
-        when(academicClient.findCandidate(20L)).thenReturn(candidate);
-        when(repository.createRequest(anyString(), anyString(), anyLong(), anyLong(), anyLong(), anyLong(), anyString()))
-                .thenReturn(pending);
-        when(repository.lockRequest(100L)).thenReturn(Optional.of(pending));
-        when(repository.findActiveEnrollment(1L, 20L)).thenReturn(Optional.empty());
-        when(repository.hasScheduleConflict(1L, 30L, candidate.schedules())).thenReturn(false);
-        when(repository.findEnrollment(1L, 20L, 30L)).thenReturn(Optional.empty());
-        doThrow(new IllegalStateException("database write failed"))
-                .when(repository).createEnrollment(1L, 20L, 10L, 30L, candidate.schedules());
-
-        assertThatThrownBy(() -> service.enroll(1L, "key-1", 20L))
-                .isInstanceOf(IllegalStateException.class);
-
-        verify(academicClient).release(10L);
-        verify(redisReservationService).release(20L, 10L, 1L);
+        verify(enrollmentPublisher, never()).publish(any());
     }
 
     @Test
@@ -237,21 +205,26 @@ class EnrollmentApplicationServiceTest {
                 .when(academicClient).release(10L);
 
         assertThatThrownBy(() -> service.drop(1L, "drop-1", 20L))
-                .isInstanceOfSatisfying(
-                        EnrollmentBusinessException.class,
+                .isInstanceOfSatisfying(EnrollmentBusinessException.class,
                         exception -> assertThat(exception.code()).isEqualTo(40917));
 
         verify(redisReservationService).restore(20L, 10L, 1L, "request-1");
-        verify(academicClient, never()).reserve(anyLong());
         verify(repository, never()).dropEnrollment(anyLong());
+    }
+
+    private void prepareNewEnrollment(EnrollmentCandidate candidate, EnrollmentRequestRecord pending) {
+        when(repository.findRequestByIdempotency(1L, "key-1")).thenReturn(Optional.empty());
+        when(academicClient.findCandidate(20L)).thenReturn(candidate);
+        when(repository.createRequest(anyString(), anyString(), anyLong(), anyLong(), anyLong(), anyLong(), anyString()))
+                .thenReturn(pending);
+        when(repository.lockRequest(100L)).thenReturn(Optional.of(pending));
+        when(repository.findActiveEnrollment(1L, 20L)).thenReturn(Optional.empty());
+        when(repository.hasScheduleConflict(1L, 30L, candidate.schedules())).thenReturn(false);
     }
 
     private static EnrollmentCandidate candidate() {
         return new EnrollmentCandidate(
-                20L,
-                10L,
-                30L,
-                1,
+                20L, 10L, 30L, 1,
                 List.of(new CourseSchedule(1, 1, 2, 1, 16)));
     }
 
@@ -262,22 +235,10 @@ class EnrollmentApplicationServiceTest {
     }
 
     private static EnrollmentRequestRecord request(
-            String action,
-            String status,
-            String failureCode,
-            String failureMessage) {
+            String action, String status, String failureCode, String failureMessage) {
         return new EnrollmentRequestRecord(
-                100L,
-                "request-1",
-                "key-1",
-                1L,
-                20L,
-                10L,
-                30L,
-                action,
-                status,
-                failureCode,
-                failureMessage,
+                100L, "request-1", "key-1", 1L, 20L, 10L, 30L,
+                action, status, failureCode, failureMessage,
                 LocalDateTime.of(2026, 9, 1, 10, 0),
                 "PENDING".equals(status) ? null : LocalDateTime.of(2026, 9, 1, 10, 1));
     }

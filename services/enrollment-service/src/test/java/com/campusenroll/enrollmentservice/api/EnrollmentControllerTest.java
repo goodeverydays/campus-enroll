@@ -41,7 +41,7 @@ class EnrollmentControllerTest {
     }
 
     @Test
-    void TestEnrollTrustedStudentReturnsSynchronousResult() throws Exception {
+    void TestEnrollTrustedStudentReturnsAcceptedPendingResult() throws Exception {
         when(enrollmentService.enroll(42L, "enroll-42", 100L))
                 .thenReturn(requestResponse());
 
@@ -51,10 +51,10 @@ class EnrollmentControllerTest {
                         .header("X-Request-Id", "phase3-controller-test")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"courseId\":100}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isAccepted())
                 .andExpect(header().string("X-Request-Id", "phase3-controller-test"))
                 .andExpect(jsonPath("$.code").value(0))
-                .andExpect(jsonPath("$.data.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.status").value("PENDING"))
                 .andExpect(jsonPath("$.data.courseId").value(100));
         verify(enrollmentService).enroll(42L, "enroll-42", 100L);
     }
@@ -88,10 +88,10 @@ class EnrollmentControllerTest {
                 200L,
                 300L,
                 "ENROLL",
-                "SUCCESS",
+                "PENDING",
                 null,
                 null,
                 LocalDateTime.of(2026, 9, 1, 10, 0),
-                LocalDateTime.of(2026, 9, 1, 10, 0, 1));
+                null);
     }
 }

@@ -4,7 +4,8 @@ param(
     [int]$AuthHostPort = 18081,
     [int]$StudentHostPort = 18082,
     [int]$EnrollmentHostPort = 18084,
-    [switch]$VerifyRedisReservation
+    [switch]$VerifyRedisReservation,
+    [switch]$VerifyAsyncAcceptance
 )
 
 $ErrorActionPreference = 'Stop'
@@ -26,6 +27,7 @@ function Invoke-JsonResponse {
         Method = $Method
         Headers = $Headers
         SkipHttpErrorCheck = $true
+        TimeoutSec = 5
     }
     if ($null -ne $Body) {
         $parameters.ContentType = 'application/json'
@@ -72,6 +74,32 @@ function Invoke-Redis {
         throw 'Redis verification command failed.'
     }
     return $result
+}
+
+function Wait-EnrollmentRequest {
+    param(
+        [Parameter(Mandatory)]
+        [string]$RequestId,
+        [Parameter(Mandatory)]
+        [hashtable]$Headers
+    )
+
+    for ($attempt = 0; $attempt -lt 60; $attempt++) {
+        try {
+            $state = Invoke-JsonResponse `
+                -Uri "http://localhost:$GatewayHostPort/api/v1/enrollment-requests/$RequestId" `
+                -Headers $Headers
+            if ($state.StatusCode -eq 200 -and $state.Body.data.status -in @('SUCCESS', 'FAILED')) {
+                return $state
+            }
+        } catch {
+            if ($attempt -eq 59) {
+                throw
+            }
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    throw "Enrollment request $RequestId did not reach a final state."
 }
 
 $suffix = [Guid]::NewGuid().ToString('N').Substring(0, 10)
@@ -182,14 +210,18 @@ VALUES
         -Uri "http://localhost:$GatewayHostPort/api/v1/enrollments" `
         -Headers $enrollHeaders `
         -Body @{ courseId = $courseId }
-    if ($enrolled.StatusCode -ne 200 `
+    if ($enrolled.StatusCode -notin @(200, 202) `
             -or $enrolled.Body.code -ne 0 `
-            -or $enrolled.Body.data.status -ne 'SUCCESS' `
+            -or $enrolled.Body.data.status -notin @('PENDING', 'SUCCESS') `
             -or [long]$enrolled.Body.data.courseId -ne $courseId) {
-        throw 'Synchronous enrollment failed.'
+        throw 'Enrollment acceptance failed.'
+    }
+    if ($VerifyAsyncAcceptance `
+            -and ($enrolled.StatusCode -ne 202 -or $enrolled.Body.data.status -ne 'PENDING')) {
+        throw 'Enrollment did not expose the Phase 5 HTTP 202/PENDING contract.'
     }
     $enrollmentRequestId = [string]$enrolled.Body.data.requestId
-    Write-Host 'ENROLL MySQL transaction completed synchronously'
+    Write-Host 'ENROLL request accepted with a stable request ID'
 
     if ($VerifyRedisReservation) {
         $redisRemaining = @(Invoke-Redis -Arguments @('HGET', $redisKey, 'remaining'))
@@ -202,6 +234,12 @@ VALUES
         }
         Write-Host 'REDIS Lua reservation decremented remaining capacity and stored the student marker'
     }
+
+    $enrollmentFinal = Wait-EnrollmentRequest -RequestId $enrollmentRequestId -Headers $authHeaders
+    if ($enrollmentFinal.Body.data.status -ne 'SUCCESS') {
+        throw "Enrollment worker failed the request: $($enrollmentFinal.Body.data.failureMessage)"
+    }
+    Write-Host 'WORKER enrollment request reached SUCCESS'
 
     $replayed = Invoke-JsonResponse `
         -Method Post `
@@ -222,9 +260,7 @@ VALUES
         Write-Host 'REDIS idempotency replay did not decrement capacity twice'
     }
 
-    $requestState = Invoke-JsonResponse `
-        -Uri "http://localhost:$GatewayHostPort/api/v1/enrollment-requests/$enrollmentRequestId" `
-        -Headers $authHeaders
+    $requestState = $enrollmentFinal
     if ($requestState.StatusCode -ne 200 -or $requestState.Body.data.status -ne 'SUCCESS') {
         throw 'Enrollment request status query failed.'
     }
@@ -305,13 +341,22 @@ VALUES
         -Uri "http://localhost:$GatewayHostPort/api/v1/enrollments" `
         -Headers @{ Authorization = "Bearer $accessToken"; 'Idempotency-Key' = "reenroll-$suffix" } `
         -Body @{ courseId = $courseId }
-    if ($reenrolled.StatusCode -ne 200 -or $reenrolled.Body.data.status -ne 'SUCCESS') {
-        throw 'Re-enrollment after drop failed.'
+    if ($reenrolled.StatusCode -notin @(200, 202) `
+            -or $reenrolled.Body.data.status -notin @('PENDING', 'SUCCESS')) {
+        throw 'Re-enrollment acceptance after drop failed.'
+    }
+    if ($VerifyAsyncAcceptance `
+            -and ($reenrolled.StatusCode -ne 202 -or $reenrolled.Body.data.status -ne 'PENDING')) {
+        throw 'Re-enrollment did not expose the Phase 5 HTTP 202/PENDING contract.'
+    }
+    $reenrollRequestId = [string]$reenrolled.Body.data.requestId
+    $reenrollFinal = Wait-EnrollmentRequest -RequestId $reenrollRequestId -Headers $authHeaders
+    if ($reenrollFinal.Body.data.status -ne 'SUCCESS') {
+        throw "Re-enrollment worker failed the request: $($reenrollFinal.Body.data.failureMessage)"
     }
     Write-Host 'ENROLL dropped row reactivated without violating uniqueness'
 
     if ($VerifyRedisReservation) {
-        $reenrollRequestId = [string]$reenrolled.Body.data.requestId
         $reenrollRemaining = @(Invoke-Redis -Arguments @('HGET', $redisKey, 'remaining'))
         $reenrollMarker = @(Invoke-Redis -Arguments @('HGET', $redisKey, "student:$studentId"))
         $conflictKeyExists = @(Invoke-Redis -Arguments @('EXISTS', $conflictRedisKey))

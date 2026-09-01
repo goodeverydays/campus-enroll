@@ -10,6 +10,8 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -34,15 +36,19 @@ public class EnrollmentController {
     }
 
     @PostMapping("/enrollments")
-    public ApiResponse<EnrollmentRequestResponse> enroll(
+    public ResponseEntity<ApiResponse<EnrollmentRequestResponse>> enroll(
             @RequestHeader("X-Student-Id") @Positive long studentId,
             @RequestHeader("Idempotency-Key")
             @Size(max = 64) @Pattern(regexp = IDEMPOTENCY_PATTERN) String idempotencyKey,
             @Valid @RequestBody CreateEnrollmentRequest enrollmentRequest,
             HttpServletRequest request) {
-        return ApiResponse.success(
-                enrollmentService.enroll(studentId, idempotencyKey, enrollmentRequest.courseId()),
-                RequestIds.from(request));
+        EnrollmentRequestResponse response = enrollmentService.enroll(
+                studentId, idempotencyKey, enrollmentRequest.courseId());
+        HttpStatus status = "PENDING".equals(response.status())
+                ? HttpStatus.ACCEPTED
+                : HttpStatus.OK;
+        return ResponseEntity.status(status)
+                .body(ApiResponse.success(response, RequestIds.from(request)));
     }
 
     @DeleteMapping("/enrollments/{courseId}")

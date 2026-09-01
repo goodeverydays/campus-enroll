@@ -195,7 +195,7 @@ services:
       args:
         MODULE: enrollment-service
     environment:
-      <<: [*app-environment, *redis-environment]
+      <<: [*app-environment, *redis-environment, *rabbitmq-environment]
       STUDENT_SERVICE_BASE_URL: http://student-service:8082
       COURSE_SERVICE_BASE_URL: http://course-service:8083
     ports:
@@ -204,6 +204,8 @@ services:
       mysql:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
       nacos:
         condition: service_healthy
@@ -217,6 +219,7 @@ services:
         MODULE: enrollment-worker
     environment:
       <<: [*app-environment, *redis-environment, *rabbitmq-environment]
+      COURSE_SERVICE_BASE_URL: http://course-service:8083
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:18085:8085"
     depends_on:

@@ -1,7 +1,8 @@
 # Database design
 
 One MySQL instance hosts four logical databases during local development. Tables
-are owned by one service and must not be read directly by another service.
+stay inside one bounded service domain; Enrollment Service and its Worker are
+two processes sharing the enrollment-domain database.
 
 | Database | Owner | Main tables |
 | --- | --- | --- |
@@ -30,9 +31,9 @@ through service contracts. This preserves service ownership while keeping the
 Phase 1 deployment small.
 
 The `enrollment` table enforces the business uniqueness rule on
-`(student_id, course_id, semester_id)`. Phase 4 adds no relational table: Redis
-reservation state is transient, while message-processing metadata remains absent
-until Phases 5-6.
+`(student_id, course_id, semester_id)`. Phases 4-5 add no relational table:
+Redis reservation state and RabbitMQ delivery are infrastructure state, while
+the existing `enrollment_request` row is the client-visible processing state.
 
 Phase 3 adds `V2__add_transaction_and_idempotency_baseline.sql`. It gives each
 request a student-scoped `idempotency_key`, serializes mutations through one
@@ -42,11 +43,11 @@ row, so the original uniqueness boundary remains intact.
 
 Course capacity remains owned by Course Service. Its internal capacity endpoint
 uses one conditional MySQL update to increment only an open, in-window offering
-with remaining capacity, and a guarded decrement for drops. Enrollment Service
-never reads or writes `campus_course` directly. Because Phase 3 deliberately uses
-synchronous REST instead of distributed transactions, an HTTP timeout after a
-remote capacity mutation has an ambiguous outcome. Publisher confirms, durable
-processing, reconciliation, and compensation for that boundary belong to Phase 6.
+with remaining capacity, and a guarded decrement for drops. Enrollment-domain
+processes never read or write `campus_course` directly. Because there is no
+distributed transaction across RabbitMQ, Redis and the two MySQL databases,
+publish or HTTP timeout outcomes can be ambiguous. Publisher confirms, durable
+processing evidence, reconciliation, and hardened compensation belong to Phase 6.
 
 ## Phase 4 Redis reservation model
 
@@ -66,9 +67,11 @@ admission gate rather than the system of record: Course Service still owns final
 capacity and Enrollment Service still owns enrollment truth.
 
 Successful enrollments retain their student marker. Drops remove it. A failed
-downstream step triggers best-effort reverse-order compensation. Network timeout
-ambiguity, reconciliation, and durable repair records are intentionally deferred
-to Phase 6; RabbitMQ is not used in Phase 4.
+downstream step triggers best-effort reverse-order compensation. In Phase 5 the
+Worker consumes the RabbitMQ task and owns the final Course Service mutation,
+enrollment write, and request-state transition. Network timeout ambiguity,
+reconciliation, durable repair records, retries and dead-letter handling are
+intentionally deferred to Phase 6.
 
 For a successful MySQL enrollment created before Phase 4, the Redis Hash may
 exist without that student's marker. The release script still increments an
