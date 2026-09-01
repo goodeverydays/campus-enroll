@@ -7,10 +7,12 @@ x-app-environment: &app-environment
   MYSQL_APP_USER: campus_app
   MYSQL_APP_PASSWORD: ${MYSQL_APP_PASSWORD:?Set MYSQL_APP_PASSWORD in .env}
 
-x-messaging-environment: &messaging-environment
+x-redis-environment: &redis-environment
   REDIS_HOST: redis
   REDIS_PORT: 6379
   REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+
+x-rabbitmq-environment: &rabbitmq-environment
   RABBITMQ_HOST: rabbitmq
   RABBITMQ_PORT: 5672
   RABBITMQ_USER: campus_app
@@ -193,13 +195,15 @@ services:
       args:
         MODULE: enrollment-service
     environment:
-      <<: *app-environment
+      <<: [*app-environment, *redis-environment]
       STUDENT_SERVICE_BASE_URL: http://student-service:8082
       COURSE_SERVICE_BASE_URL: http://course-service:8083
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:18084:8084"
     depends_on:
       mysql:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       nacos:
         condition: service_healthy
@@ -212,7 +216,7 @@ services:
       args:
         MODULE: enrollment-worker
     environment:
-      <<: [*app-environment, *messaging-environment]
+      <<: [*app-environment, *redis-environment, *rabbitmq-environment]
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:18085:8085"
     depends_on:

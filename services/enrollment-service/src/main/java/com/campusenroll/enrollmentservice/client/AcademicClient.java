@@ -102,6 +102,7 @@ public class AcademicClient {
                 courseId,
                 detail.offering().id(),
                 detail.offering().semesterId(),
+                detail.offering().remainingCount(),
                 schedules);
     }
 

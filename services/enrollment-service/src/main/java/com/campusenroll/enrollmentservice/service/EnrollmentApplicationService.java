@@ -25,16 +25,19 @@ public class EnrollmentApplicationService {
     private final EnrollmentRepository repository;
     private final StudentEligibilityClient studentClient;
     private final AcademicClient academicClient;
+    private final RedisReservationService redisReservationService;
     private final TransactionTemplate transactionTemplate;
 
     public EnrollmentApplicationService(
             EnrollmentRepository repository,
             StudentEligibilityClient studentClient,
             AcademicClient academicClient,
+            RedisReservationService redisReservationService,
             TransactionTemplate transactionTemplate) {
         this.repository = repository;
         this.studentClient = studentClient;
         this.academicClient = academicClient;
+        this.redisReservationService = redisReservationService;
         this.transactionTemplate = transactionTemplate;
     }
 
@@ -57,6 +60,7 @@ public class EnrollmentApplicationService {
                         enrollment.courseId(),
                         enrollment.offeringId(),
                         enrollment.semesterId(),
+                        0,
                         List.of()))
                 .orElseGet(() -> academicClient.findCandidate(courseId));
         Registration registration = register(
@@ -81,7 +85,7 @@ public class EnrollmentApplicationService {
         EnrollmentRecord enrollment = repository.findActiveEnrollment(studentId, courseId)
                 .orElseThrow(() -> new EnrollmentBusinessException(40914, "Course is not currently enrolled"));
         EnrollmentCandidate candidate = new EnrollmentCandidate(
-                enrollment.courseId(), enrollment.offeringId(), enrollment.semesterId(), List.of());
+                enrollment.courseId(), enrollment.offeringId(), enrollment.semesterId(), 0, List.of());
         Registration registration = register(studentId, idempotencyKey, candidate, DROP);
         validateReplay(registration.request(), DROP, courseId);
         if (!registration.created() && !"PENDING".equals(registration.request().status())) {
@@ -121,10 +125,14 @@ public class EnrollmentApplicationService {
                 return fail(locked, 40913, "Course schedule conflicts with an existing enrollment");
             }
 
-            boolean reserved = false;
+            boolean redisReserved = false;
+            boolean capacityReserved = false;
             try {
+                redisReservationService.reserve(
+                        candidate, locked.studentId(), locked.requestId());
+                redisReserved = true;
                 academicClient.reserve(locked.offeringId());
-                reserved = true;
+                capacityReserved = true;
                 var previous = repository.findEnrollment(
                         locked.studentId(), locked.courseId(), locked.semesterId());
                 if (previous.isPresent()) {
@@ -138,14 +146,12 @@ public class EnrollmentApplicationService {
                 repository.markRequestSuccess(locked.id());
                 return ProcessingResult.success(reload(locked.requestId()));
             } catch (EnrollmentBusinessException exception) {
-                if (reserved) {
-                    compensateRelease(locked.offeringId(), exception);
-                }
+                compensateEnrollment(
+                        locked, redisReserved, capacityReserved, exception);
                 return fail(locked, exception.code(), exception.getMessage());
             } catch (RuntimeException exception) {
-                if (reserved) {
-                    compensateRelease(locked.offeringId(), exception);
-                }
+                compensateEnrollment(
+                        locked, redisReserved, capacityReserved, exception);
                 throw exception;
             }
         });
@@ -171,13 +177,24 @@ public class EnrollmentApplicationService {
             if (enrollment == null) {
                 return fail(locked, 40914, "Course is not currently enrolled");
             }
+            boolean redisReleased = false;
+            boolean capacityReleased = false;
             try {
+                redisReleased = redisReservationService.release(
+                        enrollment.courseId(), enrollment.offeringId(), locked.studentId());
                 academicClient.release(enrollment.offeringId());
+                capacityReleased = true;
                 repository.dropEnrollment(enrollment.id());
                 repository.markRequestSuccess(locked.id());
                 return ProcessingResult.success(reload(locked.requestId()));
             } catch (EnrollmentBusinessException exception) {
+                compensateDrop(
+                        locked, enrollment, redisReleased, capacityReleased, exception);
                 return fail(locked, exception.code(), exception.getMessage());
+            } catch (RuntimeException exception) {
+                compensateDrop(
+                        locked, enrollment, redisReleased, capacityReleased, exception);
+                throw exception;
             }
         });
         if (result == null) {
@@ -244,11 +261,51 @@ public class EnrollmentApplicationService {
         }
     }
 
-    private void compensateRelease(long offeringId, RuntimeException original) {
-        try {
-            academicClient.release(offeringId);
-        } catch (RuntimeException compensationFailure) {
-            original.addSuppressed(compensationFailure);
+    private void compensateEnrollment(
+            EnrollmentRequestRecord request,
+            boolean redisReserved,
+            boolean capacityReserved,
+            RuntimeException original) {
+        if (capacityReserved) {
+            try {
+                academicClient.release(request.offeringId());
+            } catch (RuntimeException compensationFailure) {
+                original.addSuppressed(compensationFailure);
+            }
+        }
+        if (redisReserved) {
+            try {
+                redisReservationService.release(
+                        request.courseId(), request.offeringId(), request.studentId());
+            } catch (RuntimeException compensationFailure) {
+                original.addSuppressed(compensationFailure);
+            }
+        }
+    }
+
+    private void compensateDrop(
+            EnrollmentRequestRecord request,
+            EnrollmentRecord enrollment,
+            boolean redisReleased,
+            boolean capacityReleased,
+            RuntimeException original) {
+        if (capacityReleased) {
+            try {
+                academicClient.reserve(enrollment.offeringId());
+            } catch (RuntimeException compensationFailure) {
+                original.addSuppressed(compensationFailure);
+            }
+        }
+        if (redisReleased) {
+            try {
+                redisReservationService.restore(
+                        enrollment.courseId(),
+                        enrollment.offeringId(),
+                        request.studentId(),
+                        request.requestId());
+            } catch (RuntimeException compensationFailure) {
+                original.addSuppressed(compensationFailure);
+            }
         }
     }
 

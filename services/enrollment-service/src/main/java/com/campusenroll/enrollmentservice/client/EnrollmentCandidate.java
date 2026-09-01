@@ -6,6 +6,7 @@ public record EnrollmentCandidate(
         long courseId,
         long offeringId,
         long semesterId,
+        int remainingCount,
         List<CourseSchedule> schedules) {
 
     public EnrollmentCandidate {

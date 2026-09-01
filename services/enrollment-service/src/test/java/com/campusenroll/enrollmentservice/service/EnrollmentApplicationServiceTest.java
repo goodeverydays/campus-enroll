@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -46,6 +47,9 @@ class EnrollmentApplicationServiceTest {
     private AcademicClient academicClient;
 
     @Mock
+    private RedisReservationService redisReservationService;
+
+    @Mock
     private TransactionTemplate transactionTemplate;
 
     private EnrollmentApplicationService service;
@@ -59,7 +63,7 @@ class EnrollmentApplicationServiceTest {
             return callback.doInTransaction(transactionStatus);
         });
         service = new EnrollmentApplicationService(
-                repository, studentClient, academicClient, transactionTemplate);
+                repository, studentClient, academicClient, redisReservationService, transactionTemplate);
     }
 
     @Test
@@ -81,6 +85,7 @@ class EnrollmentApplicationServiceTest {
 
         assertThat(response.status()).isEqualTo("SUCCESS");
         verify(studentClient).requireEligible(1L);
+        verify(redisReservationService).reserve(candidate, 1L, "request-1");
         verify(academicClient).reserve(10L);
         verify(repository).createEnrollment(1L, 20L, 10L, 30L, candidate.schedules());
         verify(repository).markRequestSuccess(100L);
@@ -101,6 +106,7 @@ class EnrollmentApplicationServiceTest {
                 .isInstanceOfSatisfying(EnrollmentBusinessException.class,
                         exception -> assertThat(exception.code()).isEqualTo(40910));
         verify(repository).markRequestFailed(100L, 40910, "Course is already enrolled");
+        verify(redisReservationService, never()).reserve(any(), anyLong(), anyString());
         verify(academicClient, never()).reserve(anyLong());
     }
 
@@ -123,6 +129,7 @@ class EnrollmentApplicationServiceTest {
                 .isInstanceOfSatisfying(EnrollmentBusinessException.class,
                         exception -> assertThat(exception.code()).isEqualTo(40913));
         verify(academicClient, never()).reserve(anyLong());
+        verify(redisReservationService, never()).reserve(any(), anyLong(), anyString());
     }
 
     @Test
@@ -163,7 +170,80 @@ class EnrollmentApplicationServiceTest {
 
         assertThat(response.status()).isEqualTo("SUCCESS");
         verify(academicClient).release(10L);
+        verify(redisReservationService).release(20L, 10L, 1L);
         verify(repository).dropEnrollment(200L);
+    }
+
+    @Test
+    void TestCourseCapacityFailureReleasesRedisReservation() {
+        EnrollmentCandidate candidate = candidate();
+        EnrollmentRequestRecord pending = request("ENROLL", "PENDING", null, null);
+        EnrollmentRequestRecord failed = request("ENROLL", "FAILED", "40911", "Offering is full");
+        when(repository.findRequestByIdempotency(1L, "key-1")).thenReturn(Optional.empty());
+        when(academicClient.findCandidate(20L)).thenReturn(candidate);
+        when(repository.createRequest(anyString(), anyString(), anyLong(), anyLong(), anyLong(), anyLong(), anyString()))
+                .thenReturn(pending);
+        when(repository.lockRequest(100L)).thenReturn(Optional.of(pending));
+        when(repository.findActiveEnrollment(1L, 20L)).thenReturn(Optional.empty());
+        when(repository.hasScheduleConflict(1L, 30L, candidate.schedules())).thenReturn(false);
+        when(repository.findRequestByRequestId("request-1")).thenReturn(Optional.of(failed));
+        doThrow(new EnrollmentBusinessException(40911, "Offering is full"))
+                .when(academicClient).reserve(10L);
+
+        assertThatThrownBy(() -> service.enroll(1L, "key-1", 20L))
+                .isInstanceOfSatisfying(
+                        EnrollmentBusinessException.class,
+                        exception -> assertThat(exception.code()).isEqualTo(40911));
+
+        verify(redisReservationService).release(20L, 10L, 1L);
+        verify(academicClient, never()).release(anyLong());
+    }
+
+    @Test
+    void TestEnrollmentPersistenceFailureCompensatesBothReservations() {
+        EnrollmentCandidate candidate = candidate();
+        EnrollmentRequestRecord pending = request("ENROLL", "PENDING", null, null);
+        when(repository.findRequestByIdempotency(1L, "key-1")).thenReturn(Optional.empty());
+        when(academicClient.findCandidate(20L)).thenReturn(candidate);
+        when(repository.createRequest(anyString(), anyString(), anyLong(), anyLong(), anyLong(), anyLong(), anyString()))
+                .thenReturn(pending);
+        when(repository.lockRequest(100L)).thenReturn(Optional.of(pending));
+        when(repository.findActiveEnrollment(1L, 20L)).thenReturn(Optional.empty());
+        when(repository.hasScheduleConflict(1L, 30L, candidate.schedules())).thenReturn(false);
+        when(repository.findEnrollment(1L, 20L, 30L)).thenReturn(Optional.empty());
+        doThrow(new IllegalStateException("database write failed"))
+                .when(repository).createEnrollment(1L, 20L, 10L, 30L, candidate.schedules());
+
+        assertThatThrownBy(() -> service.enroll(1L, "key-1", 20L))
+                .isInstanceOf(IllegalStateException.class);
+
+        verify(academicClient).release(10L);
+        verify(redisReservationService).release(20L, 10L, 1L);
+    }
+
+    @Test
+    void TestDropCapacityFailureRestoresRedisReservation() {
+        EnrollmentRecord active = enrollment("ENROLLED");
+        EnrollmentRequestRecord pending = request("DROP", "PENDING", null, null);
+        EnrollmentRequestRecord failed = request("DROP", "FAILED", "40917", "Capacity release underflow");
+        when(repository.findRequestByIdempotency(1L, "drop-1")).thenReturn(Optional.empty());
+        when(repository.findActiveEnrollment(1L, 20L)).thenReturn(Optional.of(active));
+        when(repository.createRequest(anyString(), anyString(), anyLong(), anyLong(), anyLong(), anyLong(), anyString()))
+                .thenReturn(pending);
+        when(repository.lockRequest(100L)).thenReturn(Optional.of(pending));
+        when(repository.findRequestByRequestId("request-1")).thenReturn(Optional.of(failed));
+        when(redisReservationService.release(20L, 10L, 1L)).thenReturn(true);
+        doThrow(new EnrollmentBusinessException(40917, "Capacity release underflow"))
+                .when(academicClient).release(10L);
+
+        assertThatThrownBy(() -> service.drop(1L, "drop-1", 20L))
+                .isInstanceOfSatisfying(
+                        EnrollmentBusinessException.class,
+                        exception -> assertThat(exception.code()).isEqualTo(40917));
+
+        verify(redisReservationService).restore(20L, 10L, 1L, "request-1");
+        verify(academicClient, never()).reserve(anyLong());
+        verify(repository, never()).dropEnrollment(anyLong());
     }
 
     private static EnrollmentCandidate candidate() {
@@ -171,6 +251,7 @@ class EnrollmentApplicationServiceTest {
                 20L,
                 10L,
                 30L,
+                1,
                 List.of(new CourseSchedule(1, 1, 2, 1, 16)));
     }
 

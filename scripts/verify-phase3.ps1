@@ -3,7 +3,8 @@ param(
     [int]$GatewayHostPort = 18000,
     [int]$AuthHostPort = 18081,
     [int]$StudentHostPort = 18082,
-    [int]$EnrollmentHostPort = 18084
+    [int]$EnrollmentHostPort = 18084,
+    [switch]$VerifyRedisReservation
 )
 
 $ErrorActionPreference = 'Stop'
@@ -59,6 +60,20 @@ function Invoke-MySql {
     return $result
 }
 
+function Invoke-Redis {
+    param(
+        [Parameter(Mandatory)]
+        [string[]]$Arguments
+    )
+
+    $result = @(& docker compose exec -T redis sh -c `
+        'exec redis-cli -a "$REDIS_PASSWORD" --raw "$@"' sh @Arguments 2>$null)
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Redis verification command failed.'
+    }
+    return $result
+}
+
 $suffix = [Guid]::NewGuid().ToString('N').Substring(0, 10)
 $baseId = 700000000 + (Get-Random -Minimum 1000000 -Maximum 90000000)
 $semesterId = $baseId
@@ -75,6 +90,8 @@ $legacySystem = 'phase3-verifier'
 $legacyUserId = "phase3-user-$suffix"
 $studentId = $null
 $accessToken = $null
+$redisKey = "campus:enrollment:reservation:{$courseId}:offering:$offeringId"
+$conflictRedisKey = "campus:enrollment:reservation:{$conflictCourseId}:offering:$conflictOfferingId"
 
 try {
     $courseFixture = @"
@@ -174,6 +191,18 @@ VALUES
     $enrollmentRequestId = [string]$enrolled.Body.data.requestId
     Write-Host 'ENROLL MySQL transaction completed synchronously'
 
+    if ($VerifyRedisReservation) {
+        $redisRemaining = @(Invoke-Redis -Arguments @('HGET', $redisKey, 'remaining'))
+        $redisMarker = @(Invoke-Redis -Arguments @('HGET', $redisKey, "student:$studentId"))
+        if ($redisRemaining.Count -ne 1 `
+                -or [int]$redisRemaining[0] -ne 0 `
+                -or $redisMarker.Count -ne 1 `
+                -or $redisMarker[0] -ne $enrollmentRequestId) {
+            throw 'Redis reservation was not atomically recorded.'
+        }
+        Write-Host 'REDIS Lua reservation decremented remaining capacity and stored the student marker'
+    }
+
     $replayed = Invoke-JsonResponse `
         -Method Post `
         -Uri "http://localhost:$GatewayHostPort/api/v1/enrollments" `
@@ -184,6 +213,14 @@ VALUES
         throw 'Enrollment idempotency replay failed.'
     }
     Write-Host 'IDEMPOTENCY enrollment replay returned the original result'
+
+    if ($VerifyRedisReservation) {
+        $replayRemaining = @(Invoke-Redis -Arguments @('HGET', $redisKey, 'remaining'))
+        if ($replayRemaining.Count -ne 1 -or [int]$replayRemaining[0] -ne 0) {
+            throw 'Idempotency replay changed Redis capacity.'
+        }
+        Write-Host 'REDIS idempotency replay did not decrement capacity twice'
+    }
 
     $requestState = Invoke-JsonResponse `
         -Uri "http://localhost:$GatewayHostPort/api/v1/enrollment-requests/$enrollmentRequestId" `
@@ -251,6 +288,18 @@ VALUES
     }
     Write-Host 'DROP capacity released and idempotent replay succeeded'
 
+    if ($VerifyRedisReservation) {
+        $dropRemaining = @(Invoke-Redis -Arguments @('HGET', $redisKey, 'remaining'))
+        $dropMarkerExists = @(Invoke-Redis -Arguments @('HEXISTS', $redisKey, "student:$studentId"))
+        if ($dropRemaining.Count -ne 1 `
+                -or [int]$dropRemaining[0] -ne 1 `
+                -or $dropMarkerExists.Count -ne 1 `
+                -or [int]$dropMarkerExists[0] -ne 0) {
+            throw 'Redis reservation was not released by the drop operation.'
+        }
+        Write-Host 'REDIS Lua release restored capacity and removed the student marker'
+    }
+
     $reenrolled = Invoke-JsonResponse `
         -Method Post `
         -Uri "http://localhost:$GatewayHostPort/api/v1/enrollments" `
@@ -260,6 +309,22 @@ VALUES
         throw 'Re-enrollment after drop failed.'
     }
     Write-Host 'ENROLL dropped row reactivated without violating uniqueness'
+
+    if ($VerifyRedisReservation) {
+        $reenrollRequestId = [string]$reenrolled.Body.data.requestId
+        $reenrollRemaining = @(Invoke-Redis -Arguments @('HGET', $redisKey, 'remaining'))
+        $reenrollMarker = @(Invoke-Redis -Arguments @('HGET', $redisKey, "student:$studentId"))
+        $conflictKeyExists = @(Invoke-Redis -Arguments @('EXISTS', $conflictRedisKey))
+        if ($reenrollRemaining.Count -ne 1 `
+                -or [int]$reenrollRemaining[0] -ne 0 `
+                -or $reenrollMarker.Count -ne 1 `
+                -or $reenrollMarker[0] -ne $reenrollRequestId `
+                -or $conflictKeyExists.Count -ne 1 `
+                -or [int]$conflictKeyExists[0] -ne 0) {
+            throw 'Redis re-enrollment or conflict precheck invariant failed.'
+        }
+        Write-Host 'REDIS re-enrollment reserved once and schedule conflict created no Redis state'
+    }
 
     $databaseState = @(Invoke-MySql `
         -Database 'campus_enrollment' `
@@ -293,6 +358,7 @@ VALUES
     Write-Host 'Phase 3 MySQL enrollment verification passed.'
 } finally {
     try {
+        Invoke-Redis -Arguments @('DEL', $redisKey, $conflictRedisKey) | Out-Null
         if ($null -ne $studentId) {
             $enrollmentCleanup = @"
 DELETE es FROM enrollment_schedule es
