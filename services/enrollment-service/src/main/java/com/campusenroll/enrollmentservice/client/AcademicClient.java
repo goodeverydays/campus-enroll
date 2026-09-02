@@ -68,11 +68,19 @@ public class AcademicClient {
     }
 
     public void reserve(long offeringId) {
-        mutateCapacity(org.springframework.http.HttpMethod.POST, offeringId);
+        mutateCapacity(org.springframework.http.HttpMethod.POST, offeringId, null);
+    }
+
+    public void reserve(long offeringId, String enrollmentRequestId) {
+        mutateCapacity(org.springframework.http.HttpMethod.POST, offeringId, enrollmentRequestId);
     }
 
     public void release(long offeringId) {
-        mutateCapacity(org.springframework.http.HttpMethod.DELETE, offeringId);
+        mutateCapacity(org.springframework.http.HttpMethod.DELETE, offeringId, null);
+    }
+
+    public void release(long offeringId, String enrollmentRequestId) {
+        mutateCapacity(org.springframework.http.HttpMethod.DELETE, offeringId, enrollmentRequestId);
     }
 
     private EnrollmentCandidate findDetail(long courseId, RemoteOffering candidate) {
@@ -106,11 +114,17 @@ public class AcademicClient {
                 schedules);
     }
 
-    private void mutateCapacity(org.springframework.http.HttpMethod method, long offeringId) {
+    private void mutateCapacity(
+            org.springframework.http.HttpMethod method,
+            long offeringId,
+            String enrollmentRequestId) {
         try {
-            restClient.method(method)
-                    .uri("/internal/v1/course-offerings/{offeringId}/capacity-reservations", offeringId)
-                    .retrieve()
+            RestClient.RequestBodySpec request = restClient.method(method)
+                    .uri("/internal/v1/course-offerings/{offeringId}/capacity-reservations", offeringId);
+            if (enrollmentRequestId != null && !enrollmentRequestId.isBlank()) {
+                request.header("X-Enrollment-Request-Id", enrollmentRequestId);
+            }
+            request.retrieve()
                     .toBodilessEntity();
         } catch (RestClientResponseException exception) {
             throw translate(exception, "Course Service rejected the capacity mutation");

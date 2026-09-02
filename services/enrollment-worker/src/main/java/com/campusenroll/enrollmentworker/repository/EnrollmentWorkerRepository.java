@@ -24,14 +24,18 @@ public interface EnrollmentWorkerRepository {
             long courseId,
             long offeringId,
             long semesterId,
+            String sourceRequestId,
             List<EnrollmentTaskSchedule> schedules);
 
     void reactivateEnrollment(
             long enrollmentId,
             long offeringId,
+            String sourceRequestId,
             List<EnrollmentTaskSchedule> schedules);
 
     void markRequestSuccess(long requestRowId);
 
     void markRequestFailed(long requestRowId, int failureCode, String failureMessage);
+
+    void recordDeadLetter(String requestId, int attemptCount, String failureType);
 }

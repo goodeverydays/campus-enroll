@@ -8,7 +8,9 @@ import static org.mockito.Mockito.when;
 import java.util.Optional;
 
 import com.campusenroll.courseservice.domain.CourseOffering;
+import com.campusenroll.courseservice.domain.CapacityReservation;
 import com.campusenroll.courseservice.repository.AcademicCatalogRepository;
+import com.campusenroll.courseservice.repository.CapacityReservationRepository;
 import com.campusenroll.courseservice.support.CourseCapacityException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,6 +23,9 @@ class CourseCapacityServiceTest {
 
     @Mock
     private AcademicCatalogRepository repository;
+
+    @Mock
+    private CapacityReservationRepository reservationRepository;
 
     @InjectMocks
     private CourseCapacityService service;
@@ -65,6 +70,43 @@ class CourseCapacityServiceTest {
 
         assertThat(response.selectedCount()).isEqualTo(2);
         verify(repository).releaseCapacity(10L);
+    }
+
+    @Test
+    void TestRepeatedRequestDoesNotReserveCapacityTwice() {
+        when(reservationRepository.lock("request-1"))
+                .thenReturn(Optional.of(new CapacityReservation("request-1", 10L, "RESERVED")));
+        when(repository.findOffering(10L)).thenReturn(Optional.of(offering("OPEN", 3, 10)));
+
+        var response = service.reserve(10L, "request-1");
+
+        assertThat(response.selectedCount()).isEqualTo(3);
+        verify(reservationRepository).ensure("request-1", 10L);
+        org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).reserveCapacity(10L);
+    }
+
+    @Test
+    void TestReleasedRequestCanReserveCapacityAgain() {
+        when(reservationRepository.lock("request-1"))
+                .thenReturn(Optional.of(new CapacityReservation("request-1", 10L, "RELEASED")));
+        when(repository.reserveCapacity(10L)).thenReturn(true);
+        when(repository.findOffering(10L)).thenReturn(Optional.of(offering("OPEN", 3, 10)));
+
+        service.reserve(10L, "request-1");
+
+        verify(repository).reserveCapacity(10L);
+        verify(reservationRepository).markReserved("request-1");
+    }
+
+    @Test
+    void TestRepeatedReleaseDoesNotReleaseCapacityTwice() {
+        when(reservationRepository.lock("request-1"))
+                .thenReturn(Optional.of(new CapacityReservation("request-1", 10L, "RELEASED")));
+        when(repository.findOffering(10L)).thenReturn(Optional.of(offering("OPEN", 2, 10)));
+
+        service.release(10L, "request-1");
+
+        org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).releaseCapacity(10L);
     }
 
     private static CourseOffering offering(String status, int selectedCount, int capacity) {

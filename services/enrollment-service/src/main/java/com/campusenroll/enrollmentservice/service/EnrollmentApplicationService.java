@@ -179,7 +179,7 @@ public class EnrollmentApplicationService {
             try {
                 redisReleased = redisReservationService.release(
                         enrollment.courseId(), enrollment.offeringId(), locked.studentId());
-                academicClient.release(enrollment.offeringId());
+                academicClient.release(enrollment.offeringId(), enrollment.sourceRequestId());
                 capacityReleased = true;
                 repository.dropEnrollment(enrollment.id());
                 repository.markRequestSuccess(locked.id());
@@ -280,7 +280,7 @@ public class EnrollmentApplicationService {
             RuntimeException original) {
         if (capacityReleased) {
             try {
-                academicClient.reserve(enrollment.offeringId());
+                academicClient.reserve(enrollment.offeringId(), enrollment.sourceRequestId());
             } catch (RuntimeException compensationFailure) {
                 original.addSuppressed(compensationFailure);
             }

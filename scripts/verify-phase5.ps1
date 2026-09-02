@@ -3,7 +3,8 @@ param(
     [int]$GatewayHostPort = 18000,
     [int]$AuthHostPort = 18081,
     [int]$StudentHostPort = 18082,
-    [int]$EnrollmentHostPort = 18084
+    [int]$EnrollmentHostPort = 18084,
+    [switch]$VerifyReliableCapacity
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,7 +16,8 @@ Set-StrictMode -Version Latest
     -StudentHostPort $StudentHostPort `
     -EnrollmentHostPort $EnrollmentHostPort `
     -VerifyRedisReservation `
-    -VerifyAsyncAcceptance
+    -VerifyAsyncAcceptance `
+    -VerifyReliableCapacity:$VerifyReliableCapacity
 
 if ($LASTEXITCODE -ne 0) {
     throw 'Phase 5 enrollment flow verification failed.'

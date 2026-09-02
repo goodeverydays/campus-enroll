@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 @Validated
@@ -25,14 +26,20 @@ public class InternalCourseEnrollmentController {
     @PostMapping
     public ApiResponse<CapacityMutationResponse> reserve(
             @PathVariable @Positive long offeringId,
+            @RequestHeader(value = "X-Enrollment-Request-Id", required = false) String enrollmentRequestId,
             HttpServletRequest request) {
-        return ApiResponse.success(courseCapacityService.reserve(offeringId), RequestIds.from(request));
+        return ApiResponse.success(
+                courseCapacityService.reserve(offeringId, enrollmentRequestId),
+                RequestIds.from(request));
     }
 
     @DeleteMapping
     public ApiResponse<CapacityMutationResponse> release(
             @PathVariable @Positive long offeringId,
+            @RequestHeader(value = "X-Enrollment-Request-Id", required = false) String enrollmentRequestId,
             HttpServletRequest request) {
-        return ApiResponse.success(courseCapacityService.release(offeringId), RequestIds.from(request));
+        return ApiResponse.success(
+                courseCapacityService.release(offeringId, enrollmentRequestId),
+                RequestIds.from(request));
     }
 }

@@ -6,7 +6,6 @@ import com.campusenroll.enrollmentworker.domain.WorkerEnrollmentRequest;
 import com.campusenroll.enrollmentworker.messaging.EnrollmentTask;
 import com.campusenroll.enrollmentworker.repository.EnrollmentWorkerRepository;
 import com.campusenroll.enrollmentworker.support.WorkerBusinessException;
-import com.campusenroll.enrollmentworker.support.WorkerDependencyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -46,21 +45,20 @@ public class EnrollmentWorkerService {
 
         repository.lockStudent(request.studentId());
         if (repository.findActiveEnrollment(request.studentId(), request.courseId()).isPresent()) {
-            failAndReleaseRedis(request, 40910, "Course is already enrolled", null);
+            failAndReleaseRedis(request, 40910, "Course is already enrolled");
             return true;
         }
         if (repository.hasScheduleConflict(request.studentId(), request.semesterId(), task.schedules())) {
             failAndReleaseRedis(
                     request,
                     40913,
-                    "Course schedule conflicts with an existing enrollment",
-                    null);
+                    "Course schedule conflicts with an existing enrollment");
             return true;
         }
 
         boolean capacityReserved = false;
         try {
-            courseCapacityClient.reserve(request.offeringId());
+            courseCapacityClient.reserve(request.offeringId(), request.requestId());
             capacityReserved = true;
             WorkerEnrollment previous = repository.findEnrollment(
                     request.studentId(), request.courseId(), request.semesterId()).orElse(null);
@@ -70,66 +68,86 @@ public class EnrollmentWorkerService {
                         request.courseId(),
                         request.offeringId(),
                         request.semesterId(),
+                        request.requestId(),
                         task.schedules());
             } else {
-                repository.reactivateEnrollment(previous.id(), request.offeringId(), task.schedules());
+                repository.reactivateEnrollment(
+                        previous.id(), request.offeringId(), request.requestId(), task.schedules());
             }
             repository.markRequestSuccess(request.id());
             return true;
         } catch (WorkerBusinessException exception) {
-            compensate(request, capacityReserved, exception);
+            compensateCapacity(request, capacityReserved, exception);
+            releaseRedis(request);
             repository.markRequestFailed(request.id(), exception.code(), exception.getMessage());
             return true;
-        } catch (WorkerDependencyException exception) {
-            compensate(request, capacityReserved, exception);
-            repository.markRequestFailed(request.id(), 50300, exception.getMessage());
-            return true;
         } catch (RuntimeException exception) {
-            compensate(request, capacityReserved, exception);
+            compensateCapacity(request, capacityReserved, exception);
             throw exception;
         }
     }
 
+    public void failAfterRetries(
+            EnrollmentTask task,
+            String failureMessage,
+            int attemptCount,
+            String failureType) {
+        Boolean finalized = transactionTemplate.execute(status -> {
+            WorkerEnrollmentRequest request = repository.lockRequest(task.requestId()).orElse(null);
+            if (request == null || !matchesContract(request, task)) {
+                return false;
+            }
+            if (!"PENDING".equals(request.status())) {
+                return false;
+            }
+            courseCapacityClient.release(request.offeringId(), request.requestId());
+            releaseRedis(request);
+            repository.markRequestFailed(request.id(), 50301, failureMessage);
+            repository.recordDeadLetter(request.requestId(), attemptCount, failureType);
+            return true;
+        });
+        if (finalized == null) {
+            throw new IllegalStateException("Enrollment retry finalization returned no result");
+        }
+    }
+
     private void validateContract(WorkerEnrollmentRequest request, EnrollmentTask task) {
-        if (!"ENROLL".equals(request.action())
-                || request.studentId() != task.studentId()
-                || request.courseId() != task.courseId()
-                || request.offeringId() != task.offeringId()
-                || request.semesterId() != task.semesterId()) {
+        if (!matchesContract(request, task)) {
             throw new IllegalStateException("Enrollment task does not match its database request");
         }
+    }
+
+    private static boolean matchesContract(WorkerEnrollmentRequest request, EnrollmentTask task) {
+        return "ENROLL".equals(request.action())
+                && request.studentId() == task.studentId()
+                && request.courseId() == task.courseId()
+                && request.offeringId() == task.offeringId()
+                && request.semesterId() == task.semesterId();
     }
 
     private void failAndReleaseRedis(
             WorkerEnrollmentRequest request,
             int code,
-            String message,
-            RuntimeException original) {
-        RuntimeException failure = original == null ? new WorkerBusinessException(code, message) : original;
-        releaseRedis(request, failure);
+            String message) {
+        releaseRedis(request);
         repository.markRequestFailed(request.id(), code, message);
     }
 
-    private void compensate(
+    private void compensateCapacity(
             WorkerEnrollmentRequest request,
             boolean capacityReserved,
             RuntimeException original) {
         if (capacityReserved) {
             try {
-                courseCapacityClient.release(request.offeringId());
+                courseCapacityClient.release(request.offeringId(), request.requestId());
             } catch (RuntimeException compensationFailure) {
                 original.addSuppressed(compensationFailure);
             }
         }
-        releaseRedis(request, original);
     }
 
-    private void releaseRedis(WorkerEnrollmentRequest request, RuntimeException original) {
-        try {
-            redisCompensator.release(
-                    request.courseId(), request.offeringId(), request.studentId());
-        } catch (RuntimeException compensationFailure) {
-            original.addSuppressed(compensationFailure);
-        }
+    private void releaseRedis(WorkerEnrollmentRequest request) {
+        redisCompensator.release(
+                request.courseId(), request.offeringId(), request.studentId());
     }
 }

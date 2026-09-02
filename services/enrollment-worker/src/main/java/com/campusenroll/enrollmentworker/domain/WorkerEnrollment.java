@@ -6,5 +6,6 @@ public record WorkerEnrollment(
         long courseId,
         long offeringId,
         long semesterId,
+        String sourceRequestId,
         String status) {
 }

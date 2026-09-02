@@ -4,9 +4,9 @@
 旧教务系统继续持有身份、学籍和成绩等既有能力，CampusEnroll 独立承担课程查询与
 选课链路，并通过 SSO / Token 与 REST API 集成。
 
-> 当前状态：Phase 5 RabbitMQ 基础异步选课。Enrollment Service 完成资格与冲突预检、
-> Redis Lua 原子预占并投递任务，以 HTTP `202` 和 `PENDING` 立即返回；Enrollment
-> Worker 消费任务、执行 Course Service 容量条件更新、写入选课记录并落最终状态。
+> 当前状态：Phase 6 RabbitMQ 可靠异步选课。Enrollment Service 在 Redis Lua 原子预占后
+> 使用 Publisher Confirm 投递任务；Enrollment Worker 采用手动 ACK、有限延迟重试和
+> DLQ，并以请求级容量状态与数据库唯一约束保证重复投递安全。
 
 ## 技术基线
 
@@ -186,9 +186,19 @@ Phase 5 RabbitMQ 异步选课验证：
 ```
 
 该脚本明确要求首次选课和再次选课返回 HTTP `202` / `PENDING`，随后轮询请求状态直到
-Worker 写入 `SUCCESS`；同时检查 RabbitMQ 队列已清空且存在活动消费者。当前使用自动
-ACK 且不重新入队，Publisher Confirm、手动 ACK、重试、DLQ 和持久化修复记录仍属于
-Phase 6，不能把当前实现视为完整的生产级可靠消息链路。
+Worker 写入 `SUCCESS`；同时检查 RabbitMQ 主队列已清空且存在活动消费者。
+
+Phase 6 RabbitMQ 可靠性验证：
+
+```powershell
+.\scripts\verify-phase6.ps1
+```
+
+该脚本先回归完整异步选课，再投递一个没有数据库请求记录的可解析探针消息。Worker 使用
+手动 ACK，将失败消息经 Publisher Confirm 转移到 2 秒延迟重试队列；第 3 次失败写入
+DLQ。脚本核对请求 ID、尝试次数和三个队列的最终清理状态。正常生产消息还使用 Course
+Service 的 `requestId` 容量状态记录，使响应超时后的重复扣减和重复补偿保持幂等；真实
+请求耗尽重试时，MySQL `enrollment_dead_letter` 会保存最终失败证据。
 
 需要验证基础设施重启恢复时运行：
 
@@ -214,8 +224,8 @@ docker compose down
 3. Phase 2.5：一次性 SSO 票据、短期 JWT 与 Gateway 可信身份边界。
 4. Phase 3：基于 MySQL 事务的普通选课基线。
 5. Phase 4：Redis 缓存与 Lua 原子预占。
-6. Phase 5：RabbitMQ 基础异步削峰（当前）。
-7. Phase 6：Confirm、ACK、幂等、重试、DLQ 与补偿。
+6. Phase 5：RabbitMQ 基础异步削峰。
+7. Phase 6：Confirm、手动 ACK、容量幂等、有限重试、DLQ 与补偿（当前）。
 8. Phase 7：Prometheus/Grafana、压测和实验数据分析。
 
 ## License

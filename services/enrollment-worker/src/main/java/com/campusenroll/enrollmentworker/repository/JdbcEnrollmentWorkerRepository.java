@@ -25,7 +25,7 @@ public class JdbcEnrollmentWorkerRepository implements EnrollmentWorkerRepositor
             """;
 
     private static final String ENROLLMENT_SELECT = """
-            SELECT id, student_id, course_id, offering_id, semester_id, status
+            SELECT id, student_id, course_id, offering_id, semester_id, source_request_id, status
             FROM enrollment
             """;
 
@@ -115,16 +115,20 @@ public class JdbcEnrollmentWorkerRepository implements EnrollmentWorkerRepositor
             long courseId,
             long offeringId,
             long semesterId,
+            String sourceRequestId,
             List<EnrollmentTaskSchedule> schedules) {
         var keyHolder = new GeneratedKeyHolder();
         var parameters = new MapSqlParameterSource()
                 .addValue("studentId", studentId)
                 .addValue("courseId", courseId)
                 .addValue("offeringId", offeringId)
-                .addValue("semesterId", semesterId);
+                .addValue("semesterId", semesterId)
+                .addValue("sourceRequestId", sourceRequestId);
         jdbcTemplate.update("""
-                INSERT INTO enrollment (student_id, course_id, offering_id, semester_id, status)
-                VALUES (:studentId, :courseId, :offeringId, :semesterId, 'ENROLLED')
+                INSERT INTO enrollment (
+                    student_id, course_id, offering_id, semester_id, source_request_id, status)
+                VALUES (
+                    :studentId, :courseId, :offeringId, :semesterId, :sourceRequestId, 'ENROLLED')
                 """, parameters, keyHolder, new String[] {"id"});
         Number key = keyHolder.getKey();
         if (key == null) {
@@ -137,17 +141,22 @@ public class JdbcEnrollmentWorkerRepository implements EnrollmentWorkerRepositor
     public void reactivateEnrollment(
             long enrollmentId,
             long offeringId,
+            String sourceRequestId,
             List<EnrollmentTaskSchedule> schedules) {
         int updated = jdbcTemplate.update("""
                 UPDATE enrollment
                 SET offering_id = :offeringId,
+                    source_request_id = :sourceRequestId,
                     status = 'ENROLLED',
                     enrolled_at = CURRENT_TIMESTAMP(3),
                     dropped_at = NULL,
                     version = version + 1
                 WHERE id = :enrollmentId
                   AND status = 'DROPPED'
-                """, Map.of("enrollmentId", enrollmentId, "offeringId", offeringId));
+                """, Map.of(
+                "enrollmentId", enrollmentId,
+                "offeringId", offeringId,
+                "sourceRequestId", sourceRequestId));
         if (updated != 1) {
             throw new IllegalStateException("Enrollment was not dropped when reactivated");
         }
@@ -186,6 +195,23 @@ public class JdbcEnrollmentWorkerRepository implements EnrollmentWorkerRepositor
                 "requestRowId", requestRowId,
                 "failureCode", Integer.toString(failureCode),
                 "failureMessage", failureMessage));
+    }
+
+    @Override
+    public void recordDeadLetter(String requestId, int attemptCount, String failureType) {
+        jdbcTemplate.update("""
+                INSERT INTO enrollment_dead_letter (
+                    request_id, attempt_count, failure_type, failed_at)
+                VALUES (
+                    :requestId, :attemptCount, :failureType, CURRENT_TIMESTAMP(3))
+                ON DUPLICATE KEY UPDATE
+                    attempt_count = VALUES(attempt_count),
+                    failure_type = VALUES(failure_type),
+                    failed_at = VALUES(failed_at)
+                """, Map.of(
+                "requestId", requestId,
+                "attemptCount", attemptCount,
+                "failureType", failureType));
     }
 
     private Optional<WorkerEnrollment> findEnrollment(String sql, Map<String, ?> parameters) {
@@ -235,6 +261,7 @@ public class JdbcEnrollmentWorkerRepository implements EnrollmentWorkerRepositor
                 resultSet.getLong("course_id"),
                 resultSet.getLong("offering_id"),
                 resultSet.getLong("semester_id"),
+                resultSet.getString("source_request_id"),
                 resultSet.getString("status"));
     }
 }

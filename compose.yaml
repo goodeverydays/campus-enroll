@@ -18,6 +18,18 @@ x-rabbitmq-environment: &rabbitmq-environment
   RABBITMQ_USER: campus_app
   RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
   RABBITMQ_VHOST: /campus-enroll
+  ENROLLMENT_EXCHANGE: campus.enrollment.exchange
+  ENROLLMENT_QUEUE: campus.enrollment.queue
+  ENROLLMENT_ROUTING_KEY: campus.enrollment.requested
+  ENROLLMENT_RETRY_EXCHANGE: campus.enrollment.retry.exchange
+  ENROLLMENT_RETRY_QUEUE: campus.enrollment.retry.queue
+  ENROLLMENT_RETRY_ROUTING_KEY: campus.enrollment.retry
+  ENROLLMENT_DLX: campus.enrollment.dlx
+  ENROLLMENT_DLQ: campus.enrollment.dlq
+  ENROLLMENT_DLQ_ROUTING_KEY: campus.enrollment.dead
+  ENROLLMENT_RETRY_DELAY: 2s
+  ENROLLMENT_MAX_ATTEMPTS: 3
+  ENROLLMENT_CONFIRM_TIMEOUT: 5s
 
 x-app-common: &app-common
   restart: unless-stopped

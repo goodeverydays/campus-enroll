@@ -8,6 +8,7 @@ public record EnrollmentRecord(
         long courseId,
         long offeringId,
         long semesterId,
+        String sourceRequestId,
         String status,
         LocalDateTime enrolledAt,
         LocalDateTime droppedAt) {

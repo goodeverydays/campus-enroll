@@ -5,7 +5,8 @@ param(
     [int]$StudentHostPort = 18082,
     [int]$EnrollmentHostPort = 18084,
     [switch]$VerifyRedisReservation,
-    [switch]$VerifyAsyncAcceptance
+    [switch]$VerifyAsyncAcceptance,
+    [switch]$VerifyReliableCapacity
 )
 
 $ErrorActionPreference = 'Stop'
@@ -388,6 +389,31 @@ VALUES
     }
     Write-Host 'DATABASE uniqueness, schedule snapshot, failure history, and capacity counts are consistent'
 
+    if ($VerifyReliableCapacity) {
+        $sourceRequestCount = @(Invoke-MySql `
+            -Database 'campus_enrollment' `
+            -Tabular `
+            -Sql "SELECT COUNT(*) FROM enrollment WHERE student_id=$studentId AND course_id=$courseId AND source_request_id='$reenrollRequestId';")
+        $capacityReservations = @(Invoke-MySql `
+            -Database 'campus_course' `
+            -Tabular `
+            -Sql "SELECT request_id, status FROM course_capacity_reservation WHERE request_id IN ('$enrollmentRequestId', '$reenrollRequestId') ORDER BY request_id;")
+        $reservationStates = @{}
+        foreach ($row in $capacityReservations) {
+            $columns = @($row -split '\s+')
+            if ($columns.Count -eq 2) {
+                $reservationStates[$columns[0]] = $columns[1]
+            }
+        }
+        if ($sourceRequestCount.Count -ne 1 `
+                -or [int]$sourceRequestCount[0] -ne 1 `
+                -or $reservationStates[$enrollmentRequestId] -ne 'RELEASED' `
+                -or $reservationStates[$reenrollRequestId] -ne 'RESERVED') {
+            throw 'Request-idempotent capacity reservation state is inconsistent.'
+        }
+        Write-Host 'DATABASE capacity reserve, drop release, and re-enrollment are request-idempotent'
+    }
+
     $openApi = Invoke-RestMethod -Uri "http://localhost:$EnrollmentHostPort/v3/api-docs"
     $paths = @($openApi.paths.PSObject.Properties.Name)
     foreach ($path in @(
@@ -409,6 +435,9 @@ VALUES
 DELETE es FROM enrollment_schedule es
 JOIN enrollment e ON e.id = es.enrollment_id
 WHERE e.student_id = $studentId;
+DELETE dl FROM enrollment_dead_letter dl
+JOIN enrollment_request er ON er.request_id = dl.request_id
+WHERE er.student_id = $studentId;
 DELETE FROM enrollment_request WHERE student_id = $studentId;
 DELETE FROM enrollment WHERE student_id = $studentId;
 DELETE FROM student_enrollment_lock WHERE student_id = $studentId;
@@ -429,6 +458,7 @@ DELETE FROM department WHERE code = '$departmentCode';
 "@
         $courseCleanup = @"
 DELETE FROM course_schedule WHERE offering_id IN ($offeringId, $conflictOfferingId);
+DELETE FROM course_capacity_reservation WHERE offering_id IN ($offeringId, $conflictOfferingId);
 DELETE FROM course_offering WHERE id IN ($offeringId, $conflictOfferingId);
 DELETE FROM course WHERE id IN ($courseId, $conflictCourseId);
 DELETE FROM teacher WHERE id = $teacherId;

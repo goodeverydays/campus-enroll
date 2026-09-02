@@ -25,9 +25,13 @@ spring:
     username: ${RABBITMQ_USER:campus_app}
     password: ${RABBITMQ_PASSWORD}
     virtual-host: ${RABBITMQ_VHOST:/campus-enroll}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
     listener:
       simple:
-        acknowledge-mode: auto
+        acknowledge-mode: manual
         default-requeue-rejected: false
 
 management:
@@ -46,7 +50,7 @@ management:
 info:
   app:
     name: ${spring.application.name}
-    phase: 5-rabbitmq-async
+    phase: 6-reliable-messaging
 
 campus:
   clients:
@@ -55,3 +59,12 @@ campus:
     exchange: ${ENROLLMENT_EXCHANGE:campus.enrollment.exchange}
     queue: ${ENROLLMENT_QUEUE:campus.enrollment.queue}
     routing-key: ${ENROLLMENT_ROUTING_KEY:campus.enrollment.requested}
+    retry-exchange: ${ENROLLMENT_RETRY_EXCHANGE:campus.enrollment.retry.exchange}
+    retry-queue: ${ENROLLMENT_RETRY_QUEUE:campus.enrollment.retry.queue}
+    retry-routing-key: ${ENROLLMENT_RETRY_ROUTING_KEY:campus.enrollment.retry}
+    dead-letter-exchange: ${ENROLLMENT_DLX:campus.enrollment.dlx}
+    dead-letter-queue: ${ENROLLMENT_DLQ:campus.enrollment.dlq}
+    dead-letter-routing-key: ${ENROLLMENT_DLQ_ROUTING_KEY:campus.enrollment.dead}
+    retry-delay: ${ENROLLMENT_RETRY_DELAY:2s}
+    max-attempts: ${ENROLLMENT_MAX_ATTEMPTS:3}
+    confirm-timeout: ${ENROLLMENT_CONFIRM_TIMEOUT:5s}

@@ -29,18 +29,19 @@ public class CourseCapacityClient {
         this.objectMapper = objectMapper;
     }
 
-    public void reserve(long offeringId) {
-        mutate(HttpMethod.POST, offeringId);
+    public void reserve(long offeringId, String requestId) {
+        mutate(HttpMethod.POST, offeringId, requestId);
     }
 
-    public void release(long offeringId) {
-        mutate(HttpMethod.DELETE, offeringId);
+    public void release(long offeringId, String requestId) {
+        mutate(HttpMethod.DELETE, offeringId, requestId);
     }
 
-    private void mutate(HttpMethod method, long offeringId) {
+    private void mutate(HttpMethod method, long offeringId, String requestId) {
         try {
             restClient.method(method)
                     .uri("/internal/v1/course-offerings/{offeringId}/capacity-reservations", offeringId)
+                    .header("X-Enrollment-Request-Id", requestId)
                     .retrieve()
                     .toBodilessEntity();
         } catch (RestClientResponseException exception) {

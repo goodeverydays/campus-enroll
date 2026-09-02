@@ -183,7 +183,7 @@ class EnrollmentApplicationServiceTest {
         var response = service.drop(1L, "drop-1", 20L);
 
         assertThat(response.status()).isEqualTo("SUCCESS");
-        verify(academicClient).release(10L);
+        verify(academicClient).release(10L, "enroll-request-0");
         verify(redisReservationService).release(20L, 10L, 1L);
         verify(repository).dropEnrollment(200L);
         verify(enrollmentPublisher, never()).publish(any());
@@ -202,7 +202,7 @@ class EnrollmentApplicationServiceTest {
         when(repository.findRequestByRequestId("request-1")).thenReturn(Optional.of(failed));
         when(redisReservationService.release(20L, 10L, 1L)).thenReturn(true);
         doThrow(new EnrollmentBusinessException(40917, "Capacity release underflow"))
-                .when(academicClient).release(10L);
+                .when(academicClient).release(10L, "enroll-request-0");
 
         assertThatThrownBy(() -> service.drop(1L, "drop-1", 20L))
                 .isInstanceOfSatisfying(EnrollmentBusinessException.class,
@@ -230,7 +230,7 @@ class EnrollmentApplicationServiceTest {
 
     private static EnrollmentRecord enrollment(String status) {
         return new EnrollmentRecord(
-                200L, 1L, 20L, 10L, 30L, status,
+                200L, 1L, 20L, 10L, 30L, "enroll-request-0", status,
                 LocalDateTime.of(2026, 9, 1, 10, 0), null);
     }
 

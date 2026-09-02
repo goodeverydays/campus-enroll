@@ -88,7 +88,7 @@ requests require an `Idempotency-Key` containing 1-64 safe characters. Replaying
 the same student, key, action, and course returns the original request result;
 reusing the key for a different operation returns `40915`.
 
-For a newly accepted enrollment, Phase 5 returns HTTP `202 Accepted` with a
+For a newly accepted enrollment, Phase 6 retains HTTP `202 Accepted` with a
 request whose status is `PENDING`. Clients poll
 `GET /api/v1/enrollment-requests/{requestId}` until it becomes `SUCCESS` or
 `FAILED`. An idempotent replay never republishes the task: it returns the current
@@ -114,14 +114,26 @@ Course Service conditional MySQL update remains the authoritative final guard.
 The queue contract carries `requestId`, student/course/offering/semester IDs, an
 immutable schedule snapshot, and submission time. The producer writes a
 persistent JSON body without Java type headers, and the consumer parses it into
-its local record, so the contract does not depend on a shared Java package.
+its local record, so the contract does not depend on a shared Java package. The
+AMQP `messageId` is the same request ID and the first delivery starts with
+`x-enrollment-attempt=1`.
 
-Phase 5 deliberately implements only the basic asynchronous path. The listener
-uses automatic ACK after a successful handler return and rejects unexpected
-failures without requeue. Known dependency/business failures are finalized as
-`FAILED` with best-effort Redis and Course Service compensation. Publish-result
-ambiguity, Publisher Confirm, manual ACK, retry, DLQ, reconciliation and durable
-compensation evidence are explicit Phase 6 work.
+Phase 6 enables correlated Publisher Confirm and mandatory returns on the initial
+publish. The Worker uses manual ACK and only acknowledges after the MySQL
+transaction succeeds, or after a confirmed transfer to the retry/DLQ route.
+Failed transfers NACK and requeue the original delivery. Transient failures use
+the durable `campus.enrollment.retry.queue`, whose TTL returns the message to the
+main queue after two seconds. Attempt three is copied to
+`campus.enrollment.dlq`; a matching real request is compensated, marked `FAILED`
+with code `50301`, and recorded in `enrollment_dead_letter`.
+
+Worker-to-Course-Service capacity mutations carry
+`X-Enrollment-Request-Id`. Course Service persists the request-level capacity
+state, so a timeout, duplicate RabbitMQ delivery, compensation retry, or drop
+cannot increment/decrement the same reservation twice. The database uniqueness
+constraint and terminal request status remain the final consumer idempotency
+boundary. DLQ replay is intentionally an operator decision; no message is
+automatically replayed after the configured attempt limit.
 
 ## Stable application errors
 
@@ -142,7 +154,9 @@ compensation evidence are explicit Phase 6 work.
 | `40915` | 409 | Idempotency key was reused for another operation |
 | `40916` | 409 | Student is not eligible for enrollment |
 | `40917` | 409 | Capacity release would underflow the selected count |
+| `40918` | 409 | Enrollment request ID was reused for another offering |
 | `50300` | 503 | Required internal service is unavailable |
+| `50301` | 503 | Enrollment processing exhausted its configured delivery attempts |
 | `50000` | 500 | Unexpected internal failure; details stay in server logs |
 
 Every response returns `X-Request-Id` as both a header and body field. A safe

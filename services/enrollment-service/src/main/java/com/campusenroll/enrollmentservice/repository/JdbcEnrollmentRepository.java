@@ -26,7 +26,7 @@ public class JdbcEnrollmentRepository implements EnrollmentRepository {
             """;
 
     private static final String ENROLLMENT_SELECT = """
-            SELECT id, student_id, course_id, offering_id, semester_id, status,
+            SELECT id, student_id, course_id, offering_id, semester_id, source_request_id, status,
                    enrolled_at, dropped_at
             FROM enrollment
             """;
@@ -320,6 +320,7 @@ public class JdbcEnrollmentRepository implements EnrollmentRepository {
                 resultSet.getLong("course_id"),
                 resultSet.getLong("offering_id"),
                 resultSet.getLong("semester_id"),
+                resultSet.getString("source_request_id"),
                 resultSet.getString("status"),
                 resultSet.getObject("enrolled_at", java.time.LocalDateTime.class),
                 resultSet.getObject("dropped_at", java.time.LocalDateTime.class));

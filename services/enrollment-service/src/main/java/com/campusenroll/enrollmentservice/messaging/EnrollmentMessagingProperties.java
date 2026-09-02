@@ -1,10 +1,13 @@
 package com.campusenroll.enrollmentservice.messaging;
 
+import java.time.Duration;
+
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties("campus.messaging")
 public record EnrollmentMessagingProperties(
         String exchange,
         String queue,
-        String routingKey) {
+        String routingKey,
+        Duration confirmTimeout) {
 }
