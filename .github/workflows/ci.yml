@@ -50,7 +50,7 @@ jobs:
       JWT_SECRET_BASE64: ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA=
       JWT_ISSUER: https://campus-enroll.local
       JWT_AUDIENCE: campus-enroll-api
-      LEGACY_SYSTEM_API_KEY: ci_legacy_system_key
+      LEGACY_SYSTEM_API_KEY: ci_legacy_system_key_1234567890
 
     steps:
       - name: Check out repository
