@@ -123,21 +123,36 @@ if (-not $metricsReady) {
 }
 Write-Host 'METRICS HTTP traffic and low-cardinality enrollment outcomes are queryable'
 
-$resultsDirectory = Join-Path $PSScriptRoot '..\load-tests\results'
-$null = New-Item -ItemType Directory -Path $resultsDirectory -Force
-& docker compose --profile load-test run --rm --no-deps `
+$k6Output = @(& docker compose --profile load-test run --rm --no-deps `
     -e "LOAD_RATE=$LoadRate" `
     -e "LOAD_DURATION=$LoadDuration" `
-    k6
-if ($LASTEXITCODE -ne 0) {
+    k6 2>&1)
+$k6ExitCode = $LASTEXITCODE
+$summaryPrefix = 'K6_SUMMARY_JSON='
+$k6Output |
+    Where-Object { -not ([string]$_).StartsWith($summaryPrefix) } |
+    ForEach-Object { Write-Host $_ }
+if ($k6ExitCode -ne 0) {
     throw 'k6 catalog baseline failed its thresholds.'
 }
 
-$summaryPath = Join-Path $resultsDirectory 'catalog-summary.json'
-if (-not (Test-Path -LiteralPath $summaryPath -PathType Leaf)) {
-    throw 'k6 did not write the catalog summary artifact.'
+$summaryLine = $k6Output |
+    Where-Object { ([string]$_).StartsWith($summaryPrefix) } |
+    Select-Object -Last 1
+if ($null -eq $summaryLine) {
+    throw 'k6 did not emit its machine-readable summary.'
 }
-$summary = Get-Content -Raw -LiteralPath $summaryPath | ConvertFrom-Json
+$summaryJson = ([string]$summaryLine).Substring($summaryPrefix.Length)
+$summary = $summaryJson | ConvertFrom-Json
+
+$resultsDirectory = Join-Path $PSScriptRoot '..\load-tests\results'
+$null = New-Item -ItemType Directory -Path $resultsDirectory -Force
+$summaryPath = Join-Path $resultsDirectory 'catalog-summary.json'
+[IO.File]::WriteAllText(
+    $summaryPath,
+    $summaryJson,
+    [Text.UTF8Encoding]::new($false)
+)
 $iterations = [int]$summary.metrics.iterations.values.count
 $p95Milliseconds = [double]$summary.metrics.http_req_duration.values.'p(95)'
 $failureRate = [double]$summary.metrics.http_req_failed.values.rate

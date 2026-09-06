@@ -296,7 +296,6 @@ services:
       LOAD_MAX_VUS: ${LOAD_MAX_VUS:-20}
     volumes:
       - ./load-tests:/scripts:ro
-      - ./load-tests/results:/results
     command: run /scripts/catalog-baseline.js
     depends_on:
       - gateway-service

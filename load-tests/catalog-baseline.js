@@ -44,7 +44,6 @@ export default function () {
 
 export function handleSummary(data) {
   return {
-    '/results/catalog-summary.json': JSON.stringify(data, null, 2),
-    stdout: `CampusEnroll catalog load test complete: ${data.metrics.iterations.values.count} iterations\n`,
+    stdout: `K6_SUMMARY_JSON=${JSON.stringify(data)}\n`,
   };
 }
