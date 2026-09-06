@@ -61,8 +61,9 @@ class EnrollmentTaskListenerTest {
                 eq("campus.enrollment.retry.exchange"),
                 eq("campus.enrollment.retry"),
                 routed.capture());
-        assertThat(routed.getValue().getMessageProperties().getHeader("x-enrollment-attempt"))
-                .isEqualTo(2);
+        Integer routedAttempt = routed.getValue().getMessageProperties()
+                .getHeader("x-enrollment-attempt");
+        assertThat(routedAttempt).isEqualTo(2);
         verify(channel).basicAck(7L, false);
     }
 
