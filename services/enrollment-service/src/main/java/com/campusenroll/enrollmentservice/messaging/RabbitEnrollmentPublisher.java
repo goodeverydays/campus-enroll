@@ -45,9 +45,9 @@ public class RabbitEnrollmentPublisher {
             rabbitTemplate.send(properties.exchange(), properties.routingKey(), message, correlation);
             CorrelationData.Confirm confirm = correlation.getFuture().get(
                     properties.confirmTimeout().toMillis(), TimeUnit.MILLISECONDS);
-            if (!confirm.ack()) {
+            if (!confirm.isAck()) {
                 throw new EnrollmentDependencyException(
-                        "RabbitMQ rejected the enrollment message: " + confirm.reason());
+                        "RabbitMQ rejected the enrollment message: " + confirm.getReason());
             }
             if (correlation.getReturned() != null) {
                 throw new EnrollmentDependencyException(

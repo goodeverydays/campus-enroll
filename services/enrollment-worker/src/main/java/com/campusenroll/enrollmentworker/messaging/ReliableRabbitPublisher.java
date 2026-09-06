@@ -33,9 +33,9 @@ public class ReliableRabbitPublisher {
             rabbitTemplate.send(exchange, routingKey, message, correlation);
             CorrelationData.Confirm confirm = correlation.getFuture().get(
                     properties.confirmTimeout().toMillis(), TimeUnit.MILLISECONDS);
-            if (!confirm.ack()) {
+            if (!confirm.isAck()) {
                 throw new WorkerDependencyException(
-                        "RabbitMQ rejected a reliability message: " + confirm.reason());
+                        "RabbitMQ rejected a reliability message: " + confirm.getReason());
             }
             if (correlation.getReturned() != null) {
                 throw new WorkerDependencyException("RabbitMQ returned an unroutable reliability message");
