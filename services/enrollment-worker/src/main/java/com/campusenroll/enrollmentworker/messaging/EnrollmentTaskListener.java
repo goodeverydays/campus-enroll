@@ -18,16 +18,19 @@ public class EnrollmentTaskListener {
     private final ObjectMapper objectMapper;
     private final ReliableRabbitPublisher rabbitPublisher;
     private final EnrollmentMessagingProperties properties;
+    private final EnrollmentWorkerMetrics metrics;
 
     public EnrollmentTaskListener(
             EnrollmentWorkerService workerService,
             ObjectMapper objectMapper,
             ReliableRabbitPublisher rabbitPublisher,
-            EnrollmentMessagingProperties properties) {
+            EnrollmentMessagingProperties properties,
+            EnrollmentWorkerMetrics metrics) {
         this.workerService = workerService;
         this.objectMapper = objectMapper;
         this.rabbitPublisher = rabbitPublisher;
         this.properties = properties;
+        this.metrics = metrics;
     }
 
     @RabbitListener(queues = "${campus.messaging.queue}")
@@ -43,6 +46,7 @@ public class EnrollmentTaskListener {
                     properties.deadLetterRoutingKey(),
                     attempt(message),
                     "INVALID_JSON",
+                    "invalid_json",
                     deliveryTag,
                     channel);
             return;
@@ -51,6 +55,7 @@ public class EnrollmentTaskListener {
         try {
             workerService.process(task);
             channel.basicAck(deliveryTag, false);
+            metrics.record("processed");
         } catch (RuntimeException exception) {
             int currentAttempt = attempt(message);
             if (currentAttempt < properties.maxAttempts()) {
@@ -60,6 +65,7 @@ public class EnrollmentTaskListener {
                         properties.retryRoutingKey(),
                         currentAttempt + 1,
                         exception.getClass().getSimpleName(),
+                        "retry",
                         deliveryTag,
                         channel);
                 return;
@@ -78,8 +84,10 @@ public class EnrollmentTaskListener {
                         currentAttempt,
                         exception.getClass().getSimpleName());
                 channel.basicAck(deliveryTag, false);
+                metrics.record("dead_letter");
             } catch (RuntimeException finalizationFailure) {
                 channel.basicNack(deliveryTag, false, true);
+                metrics.record("requeue");
             }
         }
     }
@@ -90,6 +98,7 @@ public class EnrollmentTaskListener {
             String routingKey,
             int nextAttempt,
             String failureType,
+            String successOutcome,
             long deliveryTag,
             Channel channel) throws IOException {
         try {
@@ -98,8 +107,10 @@ public class EnrollmentTaskListener {
                     routingKey,
                     routedMessage(original, nextAttempt, failureType));
             channel.basicAck(deliveryTag, false);
+            metrics.record(successOutcome);
         } catch (RuntimeException publishFailure) {
             channel.basicNack(deliveryTag, false, true);
+            metrics.record("requeue");
         }
     }
 

@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - 'chore/**'
+      - 'codex/**'
       - 'feat/**'
       - 'fix/**'
   pull_request:
@@ -51,6 +52,7 @@ jobs:
       JWT_ISSUER: https://campus-enroll.local
       JWT_AUDIENCE: campus-enroll-api
       LEGACY_SYSTEM_API_KEY: ci_legacy_system_key_1234567890
+      GRAFANA_ADMIN_PASSWORD: ci_grafana_admin_password_123456
 
     steps:
       - name: Check out repository
@@ -59,11 +61,12 @@ jobs:
       - name: Start application stack
         run: docker compose up -d --build
 
-      - name: Verify runtime and Phase 6 reliability
+      - name: Verify runtime through Phase 7
         shell: pwsh
         run: |
           ./scripts/verify-phase1.ps1
           ./scripts/verify-phase6.ps1
+          ./scripts/verify-phase7.ps1
 
       - name: Capture container diagnostics
         if: failure()

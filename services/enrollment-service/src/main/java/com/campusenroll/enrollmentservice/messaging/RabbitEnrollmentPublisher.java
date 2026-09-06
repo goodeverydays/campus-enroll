@@ -21,14 +21,17 @@ public class RabbitEnrollmentPublisher {
     private final RabbitTemplate rabbitTemplate;
     private final EnrollmentMessagingProperties properties;
     private final ObjectMapper objectMapper;
+    private final EnrollmentPublisherMetrics metrics;
 
     public RabbitEnrollmentPublisher(
             RabbitTemplate rabbitTemplate,
             EnrollmentMessagingProperties properties,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            EnrollmentPublisherMetrics metrics) {
         this.rabbitTemplate = rabbitTemplate;
         this.properties = properties;
         this.objectMapper = objectMapper;
+        this.metrics = metrics;
     }
 
     public void publish(EnrollmentTask task) {
@@ -46,24 +49,31 @@ public class RabbitEnrollmentPublisher {
             CorrelationData.Confirm confirm = correlation.getFuture().get(
                     properties.confirmTimeout().toMillis(), TimeUnit.MILLISECONDS);
             if (!confirm.isAck()) {
+                metrics.record("nack");
                 throw new EnrollmentDependencyException(
                         "RabbitMQ rejected the enrollment message: " + confirm.getReason());
             }
             if (correlation.getReturned() != null) {
+                metrics.record("returned");
                 throw new EnrollmentDependencyException(
                         "RabbitMQ returned the unroutable enrollment message");
             }
+            metrics.record("confirmed");
         } catch (JsonProcessingException exception) {
+            metrics.record("serialization_error");
             throw new EnrollmentDependencyException(
                     "Enrollment task could not be serialized", exception);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
+            metrics.record("interrupted");
             throw new EnrollmentDependencyException(
                     "RabbitMQ enrollment confirmation was interrupted", exception);
         } catch (ExecutionException | TimeoutException exception) {
+            metrics.record("confirm_failure");
             throw new EnrollmentDependencyException(
                     "RabbitMQ enrollment confirmation was not received", exception);
         } catch (AmqpException exception) {
+            metrics.record("broker_error");
             throw new EnrollmentDependencyException(
                     "RabbitMQ enrollment queue is unavailable", exception);
         }

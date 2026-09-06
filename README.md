@@ -4,9 +4,9 @@
 旧教务系统继续持有身份、学籍和成绩等既有能力，CampusEnroll 独立承担课程查询与
 选课链路，并通过 SSO / Token 与 REST API 集成。
 
-> 当前状态：Phase 6 RabbitMQ 可靠异步选课。Enrollment Service 在 Redis Lua 原子预占后
-> 使用 Publisher Confirm 投递任务；Enrollment Worker 采用手动 ACK、有限延迟重试和
-> DLQ，并以请求级容量状态与数据库唯一约束保证重复投递安全。
+> 当前状态：Phase 7 可观测性与压测基线。Phase 6 可靠异步选课语义保持不变；
+> Prometheus 抓取六个服务的 JVM、HTTP 与选课业务指标，Grafana 自动装载仪表盘，
+> k6 提供带阈值和 JSON 结果的只读课程目录基线。
 
 ## 技术基线
 
@@ -20,6 +20,9 @@
 | MySQL | 8.4 LTS (`8.4.11` image) |
 | Redis | 7.4.11 |
 | RabbitMQ | 4.2.9 Management |
+| Prometheus | 3.14.0 |
+| Grafana | 13.1.0 |
+| k6 | 2.1.0 |
 
 Spring Cloud Alibaba 官方兼容矩阵将 `2025.0.0.0`、Spring Cloud `2025.0.0`
 与 Spring Boot `3.5.0` 配成同一组，并对应 Nacos `3.0.3`，因此 Phase 1 固定
@@ -38,6 +41,8 @@ campus-enroll/
 │  ├─ enrollment-service/          # 资格预检、Redis 原子预占与 RabbitMQ 投递
 │  └─ enrollment-worker/           # 容量扣减、选课落库与请求最终状态
 ├─ infrastructure/mysql/init/      # 首次建库与授权
+├─ infrastructure/observability/   # Prometheus 配置与 Grafana provisioning
+├─ load-tests/                     # k6 场景与忽略提交的结果目录
 ├─ scripts/                         # 本地烟雾与恢复验证
 ├─ .github/workflows/               # 持续集成
 ├─ .mvn/wrapper/                    # 固定 Maven 发行版
@@ -80,6 +85,8 @@ docker compose ps
 | Gateway | `http://localhost:18000` |
 | Nacos console | `http://localhost:18080` |
 | RabbitMQ management | `http://localhost:25673` |
+| Prometheus | `http://localhost:19090` |
+| Grafana | `http://localhost:13000` |
 | Auth Swagger | `http://localhost:18081/swagger-ui.html` |
 | Student Swagger | `http://localhost:18082/swagger-ui.html` |
 | Course Swagger | `http://localhost:18083/swagger-ui.html` |
@@ -200,6 +207,18 @@ DLQ。脚本核对请求 ID、尝试次数和三个队列的最终清理状态�
 Service 的 `requestId` 容量状态记录，使响应超时后的重复扣减和重复补偿保持幂等；真实
 请求耗尽重试时，MySQL `enrollment_dead_letter` 会保存最终失败证据。
 
+Phase 7 可观测性与只读压测基线：
+
+```powershell
+.\scripts\verify-phase7.ps1
+```
+
+该脚本验证六个 Prometheus 抓取目标、Grafana 自动装载的 `CampusEnroll Overview`
+仪表盘、HTTP 与低基数业务指标，并运行默认 5 次/秒、持续 10 秒的 k6 课程查询基线。
+机器可读结果写入 `load-tests/results/catalog-summary.json`。可通过 `-LoadRate` 和
+`-LoadDuration` 调整强度；详细指标、阈值和实验记录要求见
+[docs/observability-and-load-testing.md](docs/observability-and-load-testing.md)。
+
 需要验证基础设施重启恢复时运行：
 
 ```powershell
@@ -225,8 +244,8 @@ docker compose down
 4. Phase 3：基于 MySQL 事务的普通选课基线。
 5. Phase 4：Redis 缓存与 Lua 原子预占。
 6. Phase 5：RabbitMQ 基础异步削峰。
-7. Phase 6：Confirm、手动 ACK、容量幂等、有限重试、DLQ 与补偿（当前）。
-8. Phase 7：Prometheus/Grafana、压测和实验数据分析。
+7. Phase 6：Confirm、手动 ACK、容量幂等、有限重试、DLQ 与补偿。
+8. Phase 7：Prometheus/Grafana、压测和实验数据分析（当前）。
 
 ## License
 

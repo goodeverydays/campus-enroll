@@ -16,6 +16,7 @@ import com.campusenroll.enrollmentworker.service.EnrollmentWorkerService;
 import com.campusenroll.enrollmentworker.support.WorkerDependencyException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rabbitmq.client.Channel;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -29,12 +30,14 @@ class EnrollmentTaskListenerTest {
     private final ReliableRabbitPublisher rabbitPublisher = mock(ReliableRabbitPublisher.class);
     private final Channel channel = mock(Channel.class);
     private final EnrollmentMessagingProperties properties = properties();
+    private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    private final EnrollmentWorkerMetrics metrics = new EnrollmentWorkerMetrics(meterRegistry);
     private EnrollmentTaskListener listener;
 
     @BeforeEach
     void setUp() {
         listener = new EnrollmentTaskListener(
-                workerService, objectMapper, rabbitPublisher, properties);
+                workerService, objectMapper, rabbitPublisher, properties, metrics);
     }
 
     @Test
@@ -46,6 +49,7 @@ class EnrollmentTaskListenerTest {
 
         verify(workerService).process(expected);
         verify(channel).basicAck(7L, false);
+        assertThat(counter("processed")).isEqualTo(1.0);
     }
 
     @Test
@@ -65,6 +69,7 @@ class EnrollmentTaskListenerTest {
                 .getHeader("x-enrollment-attempt");
         assertThat(routedAttempt).isEqualTo(2);
         verify(channel).basicAck(7L, false);
+        assertThat(counter("retry")).isEqualTo(1.0);
     }
 
     @Test
@@ -85,6 +90,7 @@ class EnrollmentTaskListenerTest {
                 3,
                 "IllegalStateException");
         verify(channel).basicAck(7L, false);
+        assertThat(counter("dead_letter")).isEqualTo(1.0);
     }
 
     @Test
@@ -101,6 +107,7 @@ class EnrollmentTaskListenerTest {
         listener.consume(message, channel);
 
         verify(channel).basicNack(7L, false, true);
+        assertThat(counter("requeue")).isEqualTo(1.0);
     }
 
     @Test
@@ -117,6 +124,7 @@ class EnrollmentTaskListenerTest {
                 eq("campus.enrollment.dead"),
                 any(Message.class));
         verify(channel).basicAck(7L, false);
+        assertThat(counter("invalid_json")).isEqualTo(1.0);
     }
 
     private Message message(EnrollmentTask task, int attempt) throws Exception {
@@ -152,5 +160,12 @@ class EnrollmentTaskListenerTest {
                 Duration.ofSeconds(2),
                 3,
                 Duration.ofSeconds(1));
+    }
+
+    private double counter(String outcome) {
+        return meterRegistry.get(EnrollmentWorkerMetrics.METRIC_NAME)
+                .tag("outcome", outcome)
+                .counter()
+                .count();
     }
 }

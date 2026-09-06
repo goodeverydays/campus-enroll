@@ -14,6 +14,7 @@ import java.util.List;
 import com.campusenroll.enrollmentservice.support.EnrollmentDependencyException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.AmqpException;
 import org.springframework.amqp.core.Message;
@@ -30,8 +31,10 @@ class RabbitEnrollmentPublisherTest {
             "campus.enrollment.requested",
             Duration.ofSeconds(1));
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+    private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    private final EnrollmentPublisherMetrics metrics = new EnrollmentPublisherMetrics(meterRegistry);
     private final RabbitEnrollmentPublisher publisher =
-            new RabbitEnrollmentPublisher(rabbitTemplate, properties, objectMapper);
+            new RabbitEnrollmentPublisher(rabbitTemplate, properties, objectMapper, metrics);
 
     @Test
     void TestPublishEnrollmentTaskUsesConfiguredRoute() {
@@ -55,6 +58,7 @@ class RabbitEnrollmentPublisherTest {
                 .isEqualTo("request-1");
         org.assertj.core.api.Assertions.assertThat(correlationCaptor.getValue().getId())
                 .isEqualTo("request-1");
+        org.assertj.core.api.Assertions.assertThat(counter("confirmed")).isEqualTo(1.0);
     }
 
     @Test
@@ -65,11 +69,12 @@ class RabbitEnrollmentPublisherTest {
                 .when(failingObjectMapper)
                 .writeValueAsBytes(task);
         RabbitEnrollmentPublisher failingPublisher =
-                new RabbitEnrollmentPublisher(rabbitTemplate, properties, failingObjectMapper);
+                new RabbitEnrollmentPublisher(rabbitTemplate, properties, failingObjectMapper, metrics);
 
         assertThatThrownBy(() -> failingPublisher.publish(task))
                 .isInstanceOf(EnrollmentDependencyException.class)
                 .hasMessage("Enrollment task could not be serialized");
+        org.assertj.core.api.Assertions.assertThat(counter("serialization_error")).isEqualTo(1.0);
     }
 
     @Test
@@ -86,6 +91,7 @@ class RabbitEnrollmentPublisherTest {
         assertThatThrownBy(() -> publisher.publish(task))
                 .isInstanceOf(EnrollmentDependencyException.class)
                 .hasMessage("RabbitMQ enrollment queue is unavailable");
+        org.assertj.core.api.Assertions.assertThat(counter("broker_error")).isEqualTo(1.0);
     }
 
     @Test
@@ -95,6 +101,7 @@ class RabbitEnrollmentPublisherTest {
         assertThatThrownBy(() -> publisher.publish(task()))
                 .isInstanceOf(EnrollmentDependencyException.class)
                 .hasMessageContaining("RabbitMQ rejected the enrollment message");
+        org.assertj.core.api.Assertions.assertThat(counter("nack")).isEqualTo(1.0);
     }
 
     private void confirmNextPublish(boolean acknowledged, String reason) {
@@ -111,5 +118,12 @@ class RabbitEnrollmentPublisherTest {
 
     private static EnrollmentTask task() {
         return new EnrollmentTask("request-1", 1L, 20L, 10L, 30L, List.of(), Instant.EPOCH);
+    }
+
+    private double counter(String outcome) {
+        return meterRegistry.get(EnrollmentPublisherMetrics.METRIC_NAME)
+                .tag("outcome", outcome)
+                .counter()
+                .count();
     }
 }
