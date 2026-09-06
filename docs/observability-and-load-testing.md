@@ -63,9 +63,9 @@ independent of response latency. Defaults are intentionally modest for laptops:
 You may also run k6 directly:
 
 ```powershell
-$env:K6_RATE = '20'
-$env:K6_DURATION = '30s'
-docker compose --profile load-test run --rm k6
+$env:LOAD_RATE = '20'
+$env:LOAD_DURATION = '30s'
+docker compose --profile load-test run --rm --no-deps k6
 ```
 
 Default pass/fail thresholds are:

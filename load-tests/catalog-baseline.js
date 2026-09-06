@@ -2,10 +2,10 @@ import http from 'k6/http';
 import { check } from 'k6';
 
 const baseUrl = __ENV.BASE_URL || 'http://gateway-service:8080';
-const rate = Number(__ENV.K6_RATE || 5);
-const duration = __ENV.K6_DURATION || '10s';
-const preAllocatedVUs = Number(__ENV.K6_PREALLOCATED_VUS || Math.max(5, rate));
-const maxVUs = Number(__ENV.K6_MAX_VUS || Math.max(20, rate * 4));
+const rate = Number(__ENV.LOAD_RATE || 5);
+const duration = __ENV.LOAD_DURATION || '10s';
+const preAllocatedVUs = Number(__ENV.LOAD_PREALLOCATED_VUS || Math.max(5, rate));
+const maxVUs = Number(__ENV.LOAD_MAX_VUS || Math.max(20, rate * 4));
 
 export const options = {
   scenarios: {

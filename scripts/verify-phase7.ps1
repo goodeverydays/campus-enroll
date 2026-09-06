@@ -125,9 +125,9 @@ Write-Host 'METRICS HTTP traffic and low-cardinality enrollment outcomes are que
 
 $resultsDirectory = Join-Path $PSScriptRoot '..\load-tests\results'
 $null = New-Item -ItemType Directory -Path $resultsDirectory -Force
-& docker compose --profile load-test run --rm `
-    -e "K6_RATE=$LoadRate" `
-    -e "K6_DURATION=$LoadDuration" `
+& docker compose --profile load-test run --rm --no-deps `
+    -e "LOAD_RATE=$LoadRate" `
+    -e "LOAD_DURATION=$LoadDuration" `
     k6
 if ($LASTEXITCODE -ne 0) {
     throw 'k6 catalog baseline failed its thresholds.'

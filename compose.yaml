@@ -290,10 +290,10 @@ services:
       - load-test
     environment:
       BASE_URL: ${K6_BASE_URL:-http://gateway-service:8080}
-      K6_RATE: ${K6_RATE:-5}
-      K6_DURATION: ${K6_DURATION:-10s}
-      K6_PREALLOCATED_VUS: ${K6_PREALLOCATED_VUS:-5}
-      K6_MAX_VUS: ${K6_MAX_VUS:-20}
+      LOAD_RATE: ${LOAD_RATE:-5}
+      LOAD_DURATION: ${LOAD_DURATION:-10s}
+      LOAD_PREALLOCATED_VUS: ${LOAD_PREALLOCATED_VUS:-5}
+      LOAD_MAX_VUS: ${LOAD_MAX_VUS:-20}
     volumes:
       - ./load-tests:/scripts:ro
       - ./load-tests/results:/results
