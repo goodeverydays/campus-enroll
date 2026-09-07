@@ -51,8 +51,8 @@ function Invoke-MySql {
         [string]$Sql
     )
 
-    $result = @($Sql | & docker compose exec -T mysql sh -c `
-        'exec mysql -ucampus_app -p"$MYSQL_PASSWORD"' $Database 2>$null)
+    $mysqlCommand = 'exec mysql -ucampus_app -p"$MYSQL_PASSWORD" ' + $Database
+    $result = @($Sql | & docker compose exec -T mysql sh -c $mysqlCommand 2>$null)
     if ($LASTEXITCODE -ne 0) {
         throw "MySQL command failed for database $Database."
     }

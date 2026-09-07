@@ -25,7 +25,10 @@ public class RequestIdGlobalFilter implements GlobalFilter, Ordered {
         ServerWebExchange traced = exchange.mutate()
                 .request(request -> request.headers(headers -> headers.set(REQUEST_ID_HEADER, requestId)))
                 .build();
-        traced.getResponse().getHeaders().set(REQUEST_ID_HEADER, requestId);
+        traced.getResponse().beforeCommit(() -> {
+            traced.getResponse().getHeaders().set(REQUEST_ID_HEADER, requestId);
+            return Mono.empty();
+        });
         return chain.filter(traced);
     }
 

@@ -22,7 +22,8 @@ class RequestIdGlobalFilterTest {
         var forwarded = new AtomicReference<ServerWebExchange>();
         GatewayFilterChain chain = candidate -> {
             forwarded.set(candidate);
-            return Mono.empty();
+            candidate.getResponse().getHeaders().add(RequestIdGlobalFilter.REQUEST_ID_HEADER, "downstream-value");
+            return candidate.getResponse().setComplete();
         };
 
         filter.filter(exchange, chain).block();
@@ -30,7 +31,7 @@ class RequestIdGlobalFilterTest {
         assertThat(forwarded.get().getRequest().getHeaders()
                 .getFirst(RequestIdGlobalFilter.REQUEST_ID_HEADER)).isEqualTo("frontend:request-42");
         assertThat(forwarded.get().getResponse().getHeaders()
-                .getFirst(RequestIdGlobalFilter.REQUEST_ID_HEADER)).isEqualTo("frontend:request-42");
+                .get(RequestIdGlobalFilter.REQUEST_ID_HEADER)).containsExactly("frontend:request-42");
     }
 
     @Test
@@ -40,7 +41,8 @@ class RequestIdGlobalFilterTest {
         var forwarded = new AtomicReference<ServerWebExchange>();
         GatewayFilterChain chain = candidate -> {
             forwarded.set(candidate);
-            return Mono.empty();
+            candidate.getResponse().getHeaders().add(RequestIdGlobalFilter.REQUEST_ID_HEADER, "downstream-value");
+            return candidate.getResponse().setComplete();
         };
 
         filter.filter(exchange, chain).block();
@@ -51,6 +53,6 @@ class RequestIdGlobalFilterTest {
                 .isNotEqualTo("contains spaces and is unsafe")
                 .matches("[0-9a-f-]{36}");
         assertThat(forwarded.get().getResponse().getHeaders()
-                .getFirst(RequestIdGlobalFilter.REQUEST_ID_HEADER)).isEqualTo(requestId);
+                .get(RequestIdGlobalFilter.REQUEST_ID_HEADER)).containsExactly(requestId);
     }
 }
