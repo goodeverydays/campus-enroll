@@ -134,15 +134,32 @@ services:
       args:
         MODULE: gateway-service
     environment:
-      <<: *app-environment
+      <<: [*app-environment, *redis-environment]
       JWT_SECRET_BASE64: ${JWT_SECRET_BASE64:?Set JWT_SECRET_BASE64 in .env}
       JWT_ISSUER: ${JWT_ISSUER:-https://campus-enroll.local}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-campus-enroll-api}
+      GATEWAY_ENROLLMENT_REPLENISH_RATE: ${GATEWAY_ENROLLMENT_REPLENISH_RATE:-5}
+      GATEWAY_ENROLLMENT_BURST_CAPACITY: ${GATEWAY_ENROLLMENT_BURST_CAPACITY:-10}
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${GATEWAY_HOST_PORT:-18000}:8080"
     depends_on:
       nacos:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    restart: unless-stopped
+    image: campus-enroll/frontend:dev
+    build:
+      context: ./frontend
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${FRONTEND_HOST_PORT:-15173}:8080"
+    depends_on:
+      gateway-service:
+        condition: service_started
+    networks:
+      - campus-enroll
 
   auth-service:
     <<: *app-common

@@ -4,6 +4,11 @@ server:
 spring:
   application:
     name: gateway-service
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD}
   cloud:
     nacos:
       discovery:
@@ -31,10 +36,23 @@ spring:
               uri: lb://course-service
               predicates:
                 - Path=/api/v1/courses/**,/api/v1/semesters/**,/api/v1/teachers/**,/api/v1/course-offerings/**
-            - id: enrollment-service
+            - id: enrollment-write-service
               uri: lb://enrollment-service
               predicates:
                 - Path=/api/v1/enrollments/**,/api/v1/enrollment-requests/**
+                - Method=POST,DELETE
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    redis-rate-limiter.replenishRate: ${GATEWAY_ENROLLMENT_REPLENISH_RATE:5}
+                    redis-rate-limiter.burstCapacity: ${GATEWAY_ENROLLMENT_BURST_CAPACITY:10}
+                    redis-rate-limiter.requestedTokens: 1
+                    key-resolver: "#{@enrollmentKeyResolver}"
+            - id: enrollment-read-service
+              uri: lb://enrollment-service
+              predicates:
+                - Path=/api/v1/enrollments/**,/api/v1/enrollment-requests/**
+                - Method=GET
 
 management:
   endpoints:
@@ -52,7 +70,7 @@ management:
 info:
   app:
     name: ${spring.application.name}
-    phase: 2.5-sso-jwt
+    phase: 8-frontend-gateway
 
 campus:
   security:

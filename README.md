@@ -4,9 +4,9 @@
 旧教务系统继续持有身份、学籍和成绩等既有能力，CampusEnroll 独立承担课程查询与
 选课链路，并通过 SSO / Token 与 REST API 集成。
 
-> 当前状态：Phase 7 可观测性与压测基线。Phase 6 可靠异步选课语义保持不变；
-> Prometheus 抓取六个服务的 JVM、HTTP 与选课业务指标，Grafana 自动装载仪表盘，
-> k6 提供带阈值和 JSON 结果的只读课程目录基线。
+> 当前状态：Phase 8 学生端闭环。Vue 3 前端支持 SSO Ticket 兑换、课程检索、教学班
+> 详情、异步选课状态轮询、个人课程与退课；Gateway 使用可信 JWT 学生身份执行 Redis
+> 写限流，并让请求 ID 贯穿代理和响应。Phase 6/7 可靠性与可观测性语义保持不变。
 
 ## 技术基线
 
@@ -23,6 +23,10 @@
 | Prometheus | 3.14.0 |
 | Grafana | 13.1.0 |
 | k6 | 2.1.0 |
+| Vue | 3.5.42 |
+| Vue Router | 5.3.1 |
+| Vite | 8.2.2 |
+| Node.js | 24.15.0 |
 
 Spring Cloud Alibaba 官方兼容矩阵将 `2025.0.0.0`、Spring Cloud `2025.0.0`
 与 Spring Boot `3.5.0` 配成同一组，并对应 Nacos `3.0.3`，因此 Phase 1 固定
@@ -32,7 +36,7 @@ Spring Cloud Alibaba 官方兼容矩阵将 `2025.0.0.0`、Spring Cloud `2025.0.0
 
 ```text
 campus-enroll/
-├─ frontend/                       # Vue 3 占位；Phase 2 初始化
+├─ frontend/                       # Vue 3 学生端与 Nginx 同源 API 代理
 ├─ services/
 │  ├─ gateway-service/             # 外部 API 唯一入口与静态路由
 │  ├─ auth-service/                # 一次性 SSO 票据、身份映射与 JWT 签发
@@ -82,6 +86,7 @@ docker compose ps
 
 | Purpose | URL |
 | --- | --- |
+| Student frontend | `http://localhost:15173` |
 | Gateway | `http://localhost:18000` |
 | Nacos console | `http://localhost:18080` |
 | RabbitMQ management | `http://localhost:25673` |
@@ -229,6 +234,22 @@ Phase 7 可观测性与只读压测基线：
 `load-tests/results/experiments` 子目录中。CI 只运行轻量单次基线，并将完整结果作为
 保留 14 天的构建产物上传。
 
+Phase 8 Vue 学生端与 Gateway 边界验证：
+
+```powershell
+cd frontend
+npm ci
+npm test
+npm run build
+cd ..
+.\scripts\verify-phase8.ps1
+```
+
+前端通过同源 Nginx `/api` 代理访问 Gateway，支持刷新安全的课程详情和个人课程路由。
+选课/退课写操作按可信 JWT `student_id` 使用 Redis token bucket 限流，默认每秒补充
+5 个令牌、允许 10 个突发请求；状态轮询等读请求不计入写限额。详细说明见
+[docs/frontend.md](docs/frontend.md)。
+
 需要验证基础设施重启恢复时运行：
 
 ```powershell
@@ -255,7 +276,8 @@ docker compose down
 5. Phase 4：Redis 缓存与 Lua 原子预占。
 6. Phase 5：RabbitMQ 基础异步削峰。
 7. Phase 6：Confirm、手动 ACK、容量幂等、有限重试、DLQ 与补偿。
-8. Phase 7：Prometheus/Grafana、压测和实验数据分析（当前）。
+8. Phase 7：Prometheus/Grafana、压测和实验数据分析。
+9. Phase 8：Vue 学生端、同源 API 代理、Gateway 请求追踪与写限流（当前）。
 
 ## License
 

@@ -1,0 +1,131 @@
+:root {
+  color: #153228;
+  background: #f4f1e8;
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --ink: #153228;
+  --forest: #12372a;
+  --forest-soft: #245344;
+  --mint: #dcebdc;
+  --cream: #f4f1e8;
+  --paper: #fffdf7;
+  --gold: #c6923b;
+  --danger: #a33a32;
+  --border: rgba(21, 50, 40, 0.15);
+  --shadow: 0 18px 50px rgba(25, 50, 40, 0.09);
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--cream); }
+button, input, select, textarea { font: inherit; }
+button, a { -webkit-tap-highlight-color: transparent; }
+a { color: inherit; text-decoration: none; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid rgba(198, 146, 59, 0.45); outline-offset: 2px; }
+
+.app-shell { min-height: 100vh; display: flex; flex-direction: column; }
+.page-container { width: min(1180px, calc(100% - 48px)); margin-inline: auto; }
+.site-header { height: 76px; padding: 0 max(24px, calc((100vw - 1180px) / 2)); display: flex; align-items: center; gap: 38px; background: rgba(255, 253, 247, 0.95); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 20; backdrop-filter: blur(16px); }
+.brand { display: flex; align-items: center; gap: 11px; margin-right: auto; }
+.brand-mark { width: 40px; height: 40px; border-radius: 12px 12px 12px 3px; display: grid; place-items: center; color: white; background: var(--forest); font: 800 13px/1 Georgia, serif; letter-spacing: .08em; }
+.brand strong, .brand small, .student-summary strong, .student-summary small { display: block; }
+.brand strong { font: 700 18px/1.05 Georgia, "Songti SC", serif; }
+.brand small, .student-summary small { margin-top: 4px; color: #6d7b74; font-size: 11px; }
+.main-nav { display: flex; gap: 28px; font-weight: 650; font-size: 14px; }
+.main-nav a { padding: 27px 0 23px; border-bottom: 3px solid transparent; }
+.main-nav a.router-link-active { color: var(--forest); border-color: var(--gold); }
+.account-area { min-width: 130px; display: flex; justify-content: flex-end; }
+.student-summary { display: flex; align-items: center; gap: 9px; font-size: 13px; }
+.student-avatar { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; background: var(--mint); font-weight: 800; }
+.text-button { border: 0; background: none; color: #6d7b74; cursor: pointer; padding: 7px; }
+main { flex: 1; }
+.site-footer { display: flex; justify-content: space-between; padding: 24px max(24px, calc((100vw - 1180px) / 2)); background: var(--forest); color: rgba(255,255,255,.72); font-size: 12px; }
+
+.hero-band { min-height: 350px; display: grid; align-items: center; color: white; background: radial-gradient(circle at 78% 12%, rgba(198,146,59,.32), transparent 28%), linear-gradient(125deg, #102f25, #1d4b3a); overflow: hidden; position: relative; }
+.hero-band::after { content: ""; position: absolute; width: 360px; height: 360px; border: 1px solid rgba(255,255,255,.12); border-radius: 50%; right: 5%; bottom: -65%; box-shadow: 0 0 0 58px rgba(255,255,255,.025), 0 0 0 116px rgba(255,255,255,.02); }
+.hero-content { position: relative; z-index: 1; display: flex; align-items: flex-end; justify-content: space-between; gap: 48px; }
+.hero-content h1 { margin: 10px 0 20px; max-width: 720px; font: 600 clamp(40px, 5vw, 68px)/1.08 Georgia, "Songti SC", serif; }
+.hero-content h1 em { color: #f0c878; font-style: normal; }
+.hero-content p:not(.eyebrow) { max-width: 620px; margin: 0; color: rgba(255,255,255,.72); line-height: 1.8; }
+.hero-metric { min-width: 190px; padding: 24px; border: 1px solid rgba(255,255,255,.18); border-radius: 20px; background: rgba(255,255,255,.08); backdrop-filter: blur(8px); }
+.hero-metric strong, .hero-metric span, .hero-metric small { display: block; }
+.hero-metric strong { color: #f0c878; font: 700 52px/1 Georgia, serif; }
+.hero-metric span { margin: 8px 0 14px; font-weight: 700; }
+.hero-metric small { color: rgba(255,255,255,.55); }
+.eyebrow { margin: 0; color: var(--gold); font-size: 11px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; }
+.content-section { padding-block: 48px 80px; }
+.filter-bar { margin-top: -79px; position: relative; z-index: 3; display: grid; grid-template-columns: 1fr 300px auto; gap: 12px; padding: 18px; background: var(--paper); border-radius: 18px; box-shadow: var(--shadow); }
+input, select, textarea { width: 100%; border: 1px solid var(--border); border-radius: 11px; padding: 13px 15px; background: white; color: var(--ink); transition: border-color .2s, box-shadow .2s; }
+input:focus, select:focus, textarea:focus { border-color: var(--forest-soft); box-shadow: 0 0 0 4px rgba(36,83,68,.1); outline: 0; }
+textarea { resize: vertical; }
+label { display: grid; gap: 8px; color: #4d6259; font-size: 13px; font-weight: 650; }
+.button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid transparent; border-radius: 11px; padding: 10px 20px; font-weight: 750; cursor: pointer; transition: transform .16s, box-shadow .16s, opacity .16s; }
+.button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(18,55,42,.15); }
+.button:disabled { cursor: not-allowed; opacity: .5; }
+.button-primary { background: var(--forest); color: white; }
+.button-secondary { border-color: var(--border); background: var(--paper); color: var(--forest); }
+.button-danger { border-color: rgba(163,58,50,.25); background: #fff5f2; color: var(--danger); }
+.button-small { min-height: 38px; padding: 7px 14px; font-size: 13px; }
+.section-heading { margin: 54px 0 24px; display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
+.section-heading h1, .section-heading h2 { margin: 6px 0 0; font: 650 30px/1.2 Georgia, "Songti SC", serif; }
+.large-heading { align-items: center; margin-top: 0; padding-top: 26px; }
+.large-heading h1 { font-size: 44px; }
+.large-heading p:last-child { margin-bottom: 0; color: #6d7b74; }
+.muted { color: #718078; }
+.course-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.course-card { min-height: 228px; padding: 24px; display: flex; flex-direction: column; justify-content: space-between; border: 1px solid var(--border); border-radius: 18px; background: var(--paper); box-shadow: 0 6px 22px rgba(25,50,40,.04); transition: transform .2s, border-color .2s, box-shadow .2s; }
+.course-card:hover { transform: translateY(-4px); border-color: rgba(36,83,68,.35); box-shadow: var(--shadow); }
+.course-card-top, .offering-main { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.course-code { color: var(--gold); font-size: 12px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
+.course-card h3, .offering-card h3, .enrollment-row h3 { margin: 0 0 9px; color: var(--forest); font: 650 21px/1.35 Georgia, "Songti SC", serif; }
+.course-card p, .enrollment-row p { margin: 0; color: #718078; font-size: 13px; }
+.course-link { color: var(--forest); font-size: 13px; font-weight: 750; }
+.status-chip { display: inline-flex; align-items: center; width: fit-content; border-radius: 999px; padding: 5px 9px; font-size: 10px; font-weight: 800; letter-spacing: .04em; }
+.status-success { color: #14623e; background: #e2f4e8; }.status-warning { color: #8a5a0a; background: #fff0cf; }.status-danger { color: #92332d; background: #fde4df; }.status-neutral { color: #5e6964; background: #eceeeb; }
+.skeleton-card { background: linear-gradient(100deg, #f5f3eb 20%, #fffdf7 45%, #f5f3eb 70%); background-size: 300% 100%; animation: shimmer 1.3s infinite; }
+@keyframes shimmer { to { background-position-x: -150%; } }
+.empty-state, .detail-loading { padding: 70px 24px; text-align: center; border: 1px dashed rgba(21,50,40,.25); border-radius: 18px; background: rgba(255,253,247,.55); }
+.empty-state strong { display: block; font: 650 24px Georgia, serif; }.empty-state p { color: #718078; }.empty-state .button { margin-top: 12px; }
+.pagination { margin-top: 28px; display: flex; align-items: center; justify-content: center; gap: 18px; font-size: 13px; }
+.alert { padding: 13px 16px; border-radius: 11px; line-height: 1.5; font-size: 13px; }.alert-danger { color: #862f29; background: #fde8e4; border: 1px solid #f3c7c1; }.alert-success { color: #145a38; background: #e2f4e8; border: 1px solid #bfe0c9; }
+.back-link { display: inline-flex; margin-bottom: 22px; color: var(--forest-soft); font-weight: 700; font-size: 13px; }
+
+.detail-page { padding-block: 36px 80px; }
+.detail-hero { min-height: 250px; padding: 42px; display: flex; align-items: flex-end; justify-content: space-between; gap: 32px; border-radius: 24px; color: white; background: radial-gradient(circle at 85% 15%, rgba(240,200,120,.28), transparent 28%), var(--forest); }
+.detail-hero h1 { margin: 14px 0 12px; font: 650 clamp(36px, 5vw, 60px)/1.1 Georgia, "Songti SC", serif; }.detail-hero p { margin: 0; color: rgba(255,255,255,.65); }.detail-summary { min-width: 160px; padding: 18px; border-left: 1px solid rgba(255,255,255,.2); }.detail-summary strong, .detail-summary span { display: block; }.detail-summary strong { color: #f0c878; font: 700 50px Georgia, serif; }.detail-summary span { font-size: 13px; }
+.detail-page > .alert { margin-top: 18px; }
+.offering-list { display: grid; gap: 15px; }
+.offering-card { display: grid; grid-template-columns: minmax(220px, .9fr) minmax(300px, 1.4fr) minmax(190px, .8fr) auto; align-items: center; gap: 24px; padding: 22px 24px; border: 1px solid var(--border); border-radius: 16px; background: var(--paper); }
+.offering-main { align-items: flex-start; }.offering-main h3 { margin-top: 7px; }
+.schedule-line { color: #53665e; font-size: 13px; line-height: 1.65; }
+.capacity-copy { display: flex; align-items: baseline; gap: 5px; }.capacity-copy strong { color: var(--forest); font: 700 25px Georgia, serif; }.capacity-copy span { color: #718078; font-size: 11px; }.capacity-track { height: 5px; margin-top: 8px; overflow: hidden; border-radius: 9px; background: #e6e5dd; }.capacity-track span { display: block; height: 100%; border-radius: inherit; background: var(--gold); }
+.enrollment-list { display: grid; gap: 12px; }
+.enrollment-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 28px; padding: 22px 24px; border: 1px solid var(--border); border-radius: 16px; background: var(--paper); }
+.enrollment-course { display: flex; align-items: center; gap: 24px; }.enrollment-course .course-code { min-width: 110px; }.enrollment-row h3 { margin-bottom: 6px; font-size: 18px; }
+.enrollment-meta { display: grid; justify-items: end; gap: 8px; color: #718078; font-size: 11px; }
+
+.auth-page { min-height: calc(100vh - 140px); display: grid; grid-template-columns: 1.1fr .9fr; align-items: center; gap: 80px; padding-block: 64px; }
+.auth-story h1 { max-width: 650px; margin: 12px 0 20px; font: 650 clamp(40px, 5vw, 66px)/1.08 Georgia, "Songti SC", serif; }.auth-story > p:not(.eyebrow) { max-width: 600px; color: #607169; line-height: 1.8; }
+.auth-steps { margin: 38px 0 0; padding: 0; list-style: none; display: grid; gap: 15px; }.auth-steps li { display: flex; align-items: center; gap: 14px; font-weight: 650; }.auth-steps span { width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 50%; color: var(--gold); font: 700 12px Georgia, serif; }
+.auth-card { padding: 36px; display: grid; gap: 24px; border: 1px solid var(--border); border-radius: 22px; background: var(--paper); box-shadow: var(--shadow); }.auth-card h2 { margin: 8px 0; font: 650 30px Georgia, "Songti SC", serif; }.auth-card .muted { line-height: 1.6; }.auth-card .back-link { justify-content: center; margin: 0; }
+.not-found { min-height: 65vh; display: grid; place-content: center; justify-items: center; text-align: center; }.not-found h1 { margin: 10px 0; font: 650 52px Georgia, "Songti SC", serif; }.not-found p:not(.eyebrow) { color: #718078; }.not-found .button { margin-top: 18px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+@media (max-width: 920px) {
+  .site-header { gap: 18px; }.main-nav { gap: 14px; }.student-summary > span:nth-child(2) { display: none; }
+  .course-grid { grid-template-columns: repeat(2, 1fr); }.filter-bar { grid-template-columns: 1fr 220px; }.filter-bar .button { grid-column: 1 / -1; }
+  .offering-card { grid-template-columns: 1fr 1fr; }.auth-page { grid-template-columns: 1fr; gap: 44px; }.auth-story { text-align: center; }.auth-story > p { margin-inline: auto; }.auth-steps { width: fit-content; margin-inline: auto; text-align: left; }
+}
+
+@media (max-width: 640px) {
+  .page-container { width: min(100% - 28px, 1180px); }.site-header { height: auto; min-height: 68px; padding: 12px 16px; flex-wrap: wrap; }.brand small, .main-nav { display: none; }.account-area { min-width: auto; }.site-footer { display: grid; gap: 8px; padding-inline: 16px; }
+  .hero-band { min-height: 420px; }.hero-content { align-items: flex-start; flex-direction: column; }.hero-content h1 { font-size: 42px; }.hero-metric { min-width: 100%; padding: 16px; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 0 12px; }.hero-metric strong { grid-row: 1 / 3; }.hero-metric span { margin: 0; }
+  .content-section { padding-top: 28px; }.filter-bar { margin-top: -58px; grid-template-columns: 1fr; }.filter-bar .button { grid-column: auto; }.section-heading { margin-top: 38px; }.course-grid { grid-template-columns: 1fr; }.course-card { min-height: 200px; }
+  .detail-page { padding-top: 22px; }.detail-hero { padding: 28px 22px; align-items: flex-start; flex-direction: column; }.detail-summary { min-width: 100%; padding: 16px 0 0; border-left: 0; border-top: 1px solid rgba(255,255,255,.2); }.offering-card { grid-template-columns: 1fr; gap: 14px; }.offering-card .button { width: 100%; }
+  .large-heading { align-items: flex-start; flex-direction: column; }.large-heading h1 { font-size: 38px; }.enrollment-row { grid-template-columns: 1fr; gap: 18px; }.enrollment-course { align-items: flex-start; flex-direction: column; gap: 8px; }.enrollment-meta { justify-items: start; }.enrollment-row .button { width: 100%; }
+  .auth-page { padding-block: 42px; }.auth-story h1 { font-size: 42px; }.auth-card { padding: 25px 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
