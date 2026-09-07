@@ -4,9 +4,9 @@
 旧教务系统继续持有身份、学籍和成绩等既有能力，CampusEnroll 独立承担课程查询与
 选课链路，并通过 SSO / Token 与 REST API 集成。
 
-> 当前状态：Phase 1 基础架构。此版本只有可启动的服务壳、服务注册、路由、
-> OpenAPI、基础设施和数据库 Schema；没有 Redis Lua、RabbitMQ 生产/消费、JWT
-> 或真实选课业务。
+> 当前状态：Phase 8 学生端闭环。Vue 3 前端支持 SSO Ticket 兑换、课程检索、教学班
+> 详情、异步选课状态轮询、个人课程与退课；Gateway 使用可信 JWT 学生身份执行 Redis
+> 写限流，并让请求 ID 贯穿代理和响应。Phase 6/7 可靠性与可观测性语义保持不变。
 
 ## 技术基线
 
@@ -20,6 +20,13 @@
 | MySQL | 8.4 LTS (`8.4.11` image) |
 | Redis | 7.4.11 |
 | RabbitMQ | 4.2.9 Management |
+| Prometheus | 3.14.0 |
+| Grafana | 13.1.0 |
+| k6 | 2.1.0 |
+| Vue | 3.5.42 |
+| Vue Router | 5.3.1 |
+| Vite | 8.2.2 |
+| Node.js | 24.15.0 |
 
 Spring Cloud Alibaba 官方兼容矩阵将 `2025.0.0.0`、Spring Cloud `2025.0.0`
 与 Spring Boot `3.5.0` 配成同一组，并对应 Nacos `3.0.3`，因此 Phase 1 固定
@@ -29,18 +36,24 @@ Spring Cloud Alibaba 官方兼容矩阵将 `2025.0.0.0`、Spring Cloud `2025.0.0
 
 ```text
 campus-enroll/
-├─ frontend/                       # Vue 3 占位；Phase 2 初始化
+├─ frontend/                       # Vue 3 学生端与 Nginx 同源 API 代理
 ├─ services/
 │  ├─ gateway-service/             # 外部 API 唯一入口与静态路由
-│  ├─ auth-service/                # SSO / JWT 边界（仅骨架）
-│  ├─ student-service/             # 学生与选课资格（仅骨架）
-│  ├─ course-service/              # 课程与开课信息（仅骨架）
-│  ├─ enrollment-service/          # 选课请求入口（仅骨架）
-│  └─ enrollment-worker/           # 异步落库进程（仅骨架）
-├─ infrastructure/mysql/init/      # 首次建库 Schema
+│  ├─ auth-service/                # 一次性 SSO 票据、身份映射与 JWT 签发
+│  ├─ student-service/             # 学生资料、资格与旧系统幂等同步
+│  ├─ course-service/              # 课程、学期、教师、开课班与课表查询
+│  ├─ enrollment-service/          # 资格预检、Redis 原子预占与 RabbitMQ 投递
+│  └─ enrollment-worker/           # 容量扣减、选课落库与请求最终状态
+├─ infrastructure/mysql/init/      # 首次建库与授权
+├─ infrastructure/observability/   # Prometheus 配置与 Grafana provisioning
+├─ load-tests/                     # k6 场景与忽略提交的结果目录
+├─ scripts/                         # 本地烟雾与恢复验证
+├─ .github/workflows/               # 持续集成
+├─ .mvn/wrapper/                    # 固定 Maven 发行版
 ├─ docs/                           # API 与数据库边界说明
 ├─ compose.yaml
 ├─ Dockerfile                      # 六个服务共用的多阶段构建文件
+├─ mvnw / mvnw.cmd                 # Maven Wrapper 3.3.4
 └─ pom.xml                         # Maven 聚合父项目
 ```
 
@@ -56,13 +69,16 @@ PowerShell：
 
 ```powershell
 Copy-Item .env.example .env
-# 打开 .env，把所有 replace_this_* 示例值改成仅供本机开发的强密码
+# 打开 .env，把所有 replace_this_* 示例值改成仅供本机开发的强随机值
+.\mvnw.cmd clean verify
 docker compose config
 docker compose up -d --build
 docker compose ps
+.\scripts\verify-phase1.ps1
 ```
 
-所有映射端口默认只绑定 `127.0.0.1`。如确实需要局域网访问，可在 `.env` 中显式
+所有映射端口默认只绑定 `127.0.0.1`，并使用独立的宿主机端口以避免常见开发服务冲突。
+如确实需要局域网访问，可在 `.env` 中显式
 设置 `BIND_ADDRESS`，同时补充防火墙和鉴权策略。Nacos 在本地 Compose 中关闭
 鉴权，因此不得将其暴露到公网。
 
@@ -70,9 +86,12 @@ docker compose ps
 
 | Purpose | URL |
 | --- | --- |
-| Gateway | `http://localhost:8080` |
+| Student frontend | `http://localhost:15173` |
+| Gateway | `http://localhost:18000` |
 | Nacos console | `http://localhost:18080` |
-| RabbitMQ management | `http://localhost:15672` |
+| RabbitMQ management | `http://localhost:25673` |
+| Prometheus | `http://localhost:19090` |
+| Grafana | `http://localhost:13000` |
 | Auth Swagger | `http://localhost:18081/swagger-ui.html` |
 | Student Swagger | `http://localhost:18082/swagger-ui.html` |
 | Course Swagger | `http://localhost:18083/swagger-ui.html` |
@@ -81,21 +100,21 @@ docker compose ps
 服务健康检查示例：
 
 ```powershell
-Invoke-RestMethod http://localhost:8080/actuator/health
+Invoke-RestMethod http://localhost:18000/actuator/health
 Invoke-RestMethod http://localhost:18083/actuator/health
 Invoke-RestMethod http://localhost:18083/internal/info
 ```
 
 ## 仅构建后端
 
-需要 JDK 21 和 Maven 3.6.3+：
+需要 JDK 21；Maven 由 Wrapper 固定为 3.9.16：
 
 ```powershell
-mvn clean verify
+.\mvnw.cmd clean verify
 ```
 
-当前工程尚未提交 Maven Wrapper；在确定团队使用的 Maven 发行版本后再加入，避免
-把未经验证的二进制直接写入仓库。
+Wrapper 使用 Apache 官方 `only-script` 发行方式，不在仓库中提交 Wrapper JAR，
+并通过 `distributionSha256Sum` 校验下载的 Maven 发行包。
 
 ## 数据库边界
 
@@ -103,8 +122,15 @@ mvn clean verify
 `campus_course`、`campus_enrollment`。每张表只有一个服务所有者，跨服务引用只保存
 ID，不创建跨库外键。详细设计见 [docs/database-design.md](docs/database-design.md)。
 
-初始化 SQL 仅在 `mysql-data` 卷第一次创建时执行。修改 Schema 后若需保留数据，
-应使用迁移工具；不要通过删除卷来模拟迁移。
+Compose 初始化 SQL 仅负责创建数据库和授权。各服务通过自己的 Flyway 迁移维护表：
+
+- `auth-service`: `V1__create_auth_schema.sql`
+- `student-service`: `V1__create_student_schema.sql`
+- `course-service`: `V1__create_course_schema.sql`
+- `enrollment-service`: `V1__create_enrollment_schema.sql`
+
+已经执行过的迁移文件不可修改；后续变更必须新增更高版本迁移。`baseline-on-migrate`
+仅用于兼容 Phase 1 早期创建的本地数据库卷。
 
 ## Gateway 路由
 
@@ -115,11 +141,122 @@ Gateway 通过 Nacos 和 `lb://` 服务名转发下列边界：
 | `/api/v1/auth/**` | auth-service |
 | `/api/v1/students/**` | student-service |
 | `/api/v1/courses/**` | course-service |
+| `/api/v1/semesters/**` | course-service |
+| `/api/v1/teachers/**` | course-service |
+| `/api/v1/course-offerings/**` | course-service |
 | `/api/v1/enrollments/**` | enrollment-service |
 | `/api/v1/enrollment-requests/**` | enrollment-service |
+| `/_internal/smoke/course` | course-service `/internal/info` |
 
-这些路由已经声明，但业务 Controller 将在后续阶段实现。完整约定见
+课程目录和认证兑换路由已经连接真实 Controller。学生同步与 SSO 票据签发是内部系统
+接口，不经过 Gateway。`GET /api/v1/students/me` 必须携带 Auth Service 签发的 JWT；
+Gateway 不信任客户端传来的 `X-Student-Id`。完整约定见
 [docs/api-conventions.md](docs/api-conventions.md)。
+
+Phase 2 查询接口验证：
+
+```powershell
+.\scripts\verify-phase2.ps1
+```
+
+该脚本验证 Gateway 课程目录、统一 400/404 错误、内部学生同步校验和 OpenAPI 路径。
+
+Phase 2.5 认证链路验证：
+
+```powershell
+.\scripts\verify-auth.ps1
+```
+
+脚本验证内部系统密钥、一次性票据、JWT 签名边界、网关统一 401、伪造学生身份头覆盖、
+票据重放拒绝和数据库哈希存储，并在结束时删除本次创建的临时数据。当前 Compose 的
+`LEGACY_SYSTEM_API_KEY` 仅用于本地系统间认证；生产环境应改为 mTLS 或受管的服务身份。
+
+Phase 3 普通选课验证：
+
+```powershell
+.\scripts\verify-phase3.ps1
+```
+
+脚本使用临时学生、课程和学期走完整 JWT 链路，验证选课最终状态、幂等重放、重复选课、
+课表冲突、退课、再次选课、状态查询、容量计数和数据库唯一性，并在结束时清理测试数据。
+该 Phase 3 脚本保留为 MySQL 业务不变量回归，并兼容后续阶段的异步状态轮询。
+
+Phase 4 Redis Lua 预占验证：
+
+```powershell
+.\scripts\verify-phase4.ps1
+```
+
+该脚本复用完整选课链路，并额外检查 Redis 剩余量、学生预占标记、幂等重放不重复扣减、
+退课释放和课表冲突不写 Redis。
+Lua 仅操作同一开课班的一个 Hash Key，可直接保持 Redis Cluster 的单槽原子性。
+
+Phase 5 RabbitMQ 异步选课验证：
+
+```powershell
+.\scripts\verify-phase5.ps1
+```
+
+该脚本明确要求首次选课和再次选课返回 HTTP `202` / `PENDING`，随后轮询请求状态直到
+Worker 写入 `SUCCESS`；同时检查 RabbitMQ 主队列已清空且存在活动消费者。
+
+Phase 6 RabbitMQ 可靠性验证：
+
+```powershell
+.\scripts\verify-phase6.ps1
+```
+
+该脚本先回归完整异步选课，再投递一个没有数据库请求记录的可解析探针消息。Worker 使用
+手动 ACK，将失败消息经 Publisher Confirm 转移到 2 秒延迟重试队列；第 3 次失败写入
+DLQ。脚本核对请求 ID、尝试次数和三个队列的最终清理状态。正常生产消息还使用 Course
+Service 的 `requestId` 容量状态记录，使响应超时后的重复扣减和重复补偿保持幂等；真实
+请求耗尽重试时，MySQL `enrollment_dead_letter` 会保存最终失败证据。
+
+Phase 7 可观测性与只读压测基线：
+
+```powershell
+.\scripts\verify-phase7.ps1
+```
+
+该脚本验证六个 Prometheus 抓取目标、Grafana 自动装载的 `CampusEnroll Overview`
+仪表盘、HTTP 与低基数业务指标，并运行默认 5 次/秒、持续 10 秒的 k6 课程查询基线。
+机器可读结果写入 `load-tests/results/catalog-summary.json`。可通过 `-LoadRate` 和
+`-LoadDuration` 调整强度；详细指标、阈值和实验记录要求见
+[docs/observability-and-load-testing.md](docs/observability-and-load-testing.md)。
+
+运行多档速率、每档重复三次的只读实验并生成 Markdown/CSV/JSON 汇总：
+
+```powershell
+.\scripts\run-phase7-experiment.ps1 -Rates 5,10,20 -Duration 30s -Repetitions 3
+```
+
+实验按速率顺序执行，结果保存在带 UTC 时间戳的
+`load-tests/results/experiments` 子目录中。CI 只运行轻量单次基线，并将完整结果作为
+保留 14 天的构建产物上传。
+
+Phase 8 Vue 学生端与 Gateway 边界验证：
+
+```powershell
+cd frontend
+npm ci
+npm test
+npm run build
+cd ..
+.\scripts\verify-phase8.ps1
+```
+
+前端通过同源 Nginx `/api` 代理访问 Gateway，支持刷新安全的课程详情和个人课程路由。
+选课/退课写操作按可信 JWT `student_id` 使用 Redis token bucket 限流，默认每秒补充
+5 个令牌、允许 10 个突发请求；状态轮询等读请求不计入写限额。详细说明见
+[docs/frontend.md](docs/frontend.md)。
+
+需要验证基础设施重启恢复时运行：
+
+```powershell
+.\scripts\verify-phase1.ps1 -IncludeRecovery
+```
+
+该参数会依次重启 MySQL、Redis、RabbitMQ 和 Nacos，只应用于本地开发环境。
 
 ## 停止环境
 
@@ -134,11 +271,13 @@ docker compose down
 
 1. Phase 1：项目骨架、基础设施、注册发现、路由、Schema、OpenAPI。
 2. Phase 2：课程与学生基础业务、旧系统适配接口。
-3. Phase 3：基于 MySQL 事务的普通选课基线。
-4. Phase 4：Redis 缓存与 Lua 原子预占。
-5. Phase 5：RabbitMQ 异步削峰。
-6. Phase 6：Confirm、ACK、幂等、重试、DLQ 与补偿。
-7. Phase 7：Prometheus/Grafana、压测和实验数据分析。
+3. Phase 2.5：一次性 SSO 票据、短期 JWT 与 Gateway 可信身份边界。
+4. Phase 3：基于 MySQL 事务的普通选课基线。
+5. Phase 4：Redis 缓存与 Lua 原子预占。
+6. Phase 5：RabbitMQ 基础异步削峰。
+7. Phase 6：Confirm、手动 ACK、容量幂等、有限重试、DLQ 与补偿。
+8. Phase 7：Prometheus/Grafana、压测和实验数据分析。
+9. Phase 8：Vue 学生端、同源 API 代理、Gateway 请求追踪与写限流（当前）。
 
 ## License
 

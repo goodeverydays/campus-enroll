@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'chore/**'
+      - 'codex/**'
+      - 'feat/**'
+      - 'fix/**'
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Java 21
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Set up Node 24
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.15.0'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Verify Maven reactor
+        run: ./mvnw -B -ntp clean verify
+
+      - name: Validate Docker Compose
+        run: docker compose --env-file .env.example config --quiet
+
+      - name: Verify frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+  integration:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      MYSQL_ROOT_PASSWORD: ci_root_password
+      MYSQL_APP_PASSWORD: ci_app_password
+      REDIS_PASSWORD: ci_redis_password
+      RABBITMQ_PASSWORD: ci_rabbitmq_password
+      NACOS_AUTH_TOKEN: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+      NACOS_AUTH_IDENTITY_VALUE: ci_nacos_identity
+      JWT_SECRET_BASE64: ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA=
+      JWT_ISSUER: https://campus-enroll.local
+      JWT_AUDIENCE: campus-enroll-api
+      LEGACY_SYSTEM_API_KEY: ci_legacy_system_key_1234567890
+      GRAFANA_ADMIN_PASSWORD: ci_grafana_admin_password_123456
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Start application stack
+        run: docker compose up -d --build
+
+      - name: Verify runtime through Phase 8
+        shell: pwsh
+        run: |
+          ./scripts/verify-phase1.ps1
+          ./scripts/verify-phase6.ps1
+          ./scripts/verify-phase7.ps1
+          ./scripts/verify-phase8.ps1
+
+      - name: Upload Phase 7 baseline report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phase7-k6-baseline-${{ github.run_id }}
+          path: load-tests/results/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Capture container diagnostics
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --no-color --tail=200
+
+      - name: Remove integration stack
+        if: always()
+        run: docker compose down --volumes --remove-orphans

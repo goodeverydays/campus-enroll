@@ -7,3 +7,5 @@ target/
 frontend/node_modules/
 frontend/dist/
 *.log
+load-tests/results/*
+!load-tests/results/.gitkeep

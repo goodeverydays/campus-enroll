@@ -6,14 +6,30 @@ x-app-environment: &app-environment
   MYSQL_PORT: 3306
   MYSQL_APP_USER: campus_app
   MYSQL_APP_PASSWORD: ${MYSQL_APP_PASSWORD:?Set MYSQL_APP_PASSWORD in .env}
+
+x-redis-environment: &redis-environment
   REDIS_HOST: redis
   REDIS_PORT: 6379
   REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+
+x-rabbitmq-environment: &rabbitmq-environment
   RABBITMQ_HOST: rabbitmq
   RABBITMQ_PORT: 5672
   RABBITMQ_USER: campus_app
   RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
   RABBITMQ_VHOST: /campus-enroll
+  ENROLLMENT_EXCHANGE: campus.enrollment.exchange
+  ENROLLMENT_QUEUE: campus.enrollment.queue
+  ENROLLMENT_ROUTING_KEY: campus.enrollment.requested
+  ENROLLMENT_RETRY_EXCHANGE: campus.enrollment.retry.exchange
+  ENROLLMENT_RETRY_QUEUE: campus.enrollment.retry.queue
+  ENROLLMENT_RETRY_ROUTING_KEY: campus.enrollment.retry
+  ENROLLMENT_DLX: campus.enrollment.dlx
+  ENROLLMENT_DLQ: campus.enrollment.dlq
+  ENROLLMENT_DLQ_ROUTING_KEY: campus.enrollment.dead
+  ENROLLMENT_RETRY_DELAY: 2s
+  ENROLLMENT_MAX_ATTEMPTS: 3
+  ENROLLMENT_CONFIRM_TIMEOUT: 5s
 
 x-app-common: &app-common
   restart: unless-stopped
@@ -34,7 +50,7 @@ services:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_0900_ai_ci
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:3306:3306"
+      - "${BIND_ADDRESS:-127.0.0.1}:${MYSQL_HOST_PORT:-13306}:3306"
     volumes:
       - mysql-data:/var/lib/mysql
       - ./infrastructure/mysql/init:/docker-entrypoint-initdb.d:ro
@@ -54,7 +70,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
     command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:6379:6379"
+      - "${BIND_ADDRESS:-127.0.0.1}:${REDIS_HOST_PORT:-16379}:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -73,8 +89,8 @@ services:
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
       RABBITMQ_DEFAULT_VHOST: /campus-enroll
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:5672:5672"
-      - "${BIND_ADDRESS:-127.0.0.1}:15672:15672"
+      - "${BIND_ADDRESS:-127.0.0.1}:${RABBITMQ_HOST_PORT:-25672}:5672"
+      - "${BIND_ADDRESS:-127.0.0.1}:${RABBITMQ_MANAGEMENT_HOST_PORT:-25673}:15672"
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     healthcheck:
@@ -96,9 +112,9 @@ services:
       NACOS_AUTH_IDENTITY_KEY: campus-enroll-server
       NACOS_AUTH_IDENTITY_VALUE: ${NACOS_AUTH_IDENTITY_VALUE:?Set NACOS_AUTH_IDENTITY_VALUE in .env}
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:8848:8848"
-      - "${BIND_ADDRESS:-127.0.0.1}:9848:9848"
-      - "${BIND_ADDRESS:-127.0.0.1}:18080:8080"
+      - "${BIND_ADDRESS:-127.0.0.1}:${NACOS_HTTP_HOST_PORT:-18848}:8848"
+      - "${BIND_ADDRESS:-127.0.0.1}:${NACOS_GRPC_HOST_PORT:-19848}:9848"
+      - "${BIND_ADDRESS:-127.0.0.1}:${NACOS_CONSOLE_HOST_PORT:-18080}:8080"
     volumes:
       - nacos-data:/home/nacos/data
     healthcheck:
@@ -118,12 +134,32 @@ services:
       args:
         MODULE: gateway-service
     environment:
-      <<: *app-environment
+      <<: [*app-environment, *redis-environment]
+      JWT_SECRET_BASE64: ${JWT_SECRET_BASE64:?Set JWT_SECRET_BASE64 in .env}
+      JWT_ISSUER: ${JWT_ISSUER:-https://campus-enroll.local}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-campus-enroll-api}
+      GATEWAY_ENROLLMENT_REPLENISH_RATE: ${GATEWAY_ENROLLMENT_REPLENISH_RATE:-5}
+      GATEWAY_ENROLLMENT_BURST_CAPACITY: ${GATEWAY_ENROLLMENT_BURST_CAPACITY:-10}
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:8080:8080"
+      - "${BIND_ADDRESS:-127.0.0.1}:${GATEWAY_HOST_PORT:-18000}:8080"
     depends_on:
       nacos:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    restart: unless-stopped
+    image: campus-enroll/frontend:dev
+    build:
+      context: ./frontend
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${FRONTEND_HOST_PORT:-15173}:8080"
+    depends_on:
+      gateway-service:
+        condition: service_started
+    networks:
+      - campus-enroll
 
   auth-service:
     <<: *app-common
@@ -134,6 +170,10 @@ services:
         MODULE: auth-service
     environment:
       <<: *app-environment
+      JWT_SECRET_BASE64: ${JWT_SECRET_BASE64:?Set JWT_SECRET_BASE64 in .env}
+      JWT_ISSUER: ${JWT_ISSUER:-https://campus-enroll.local}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-campus-enroll-api}
+      LEGACY_SYSTEM_API_KEY: ${LEGACY_SYSTEM_API_KEY:?Set LEGACY_SYSTEM_API_KEY in .env}
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:18081:8081"
     depends_on:
@@ -184,7 +224,9 @@ services:
       args:
         MODULE: enrollment-service
     environment:
-      <<: *app-environment
+      <<: [*app-environment, *redis-environment, *rabbitmq-environment]
+      STUDENT_SERVICE_BASE_URL: http://student-service:8082
+      COURSE_SERVICE_BASE_URL: http://course-service:8083
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:18084:8084"
     depends_on:
@@ -205,7 +247,8 @@ services:
       args:
         MODULE: enrollment-worker
     environment:
-      <<: *app-environment
+      <<: [*app-environment, *redis-environment, *rabbitmq-environment]
+      COURSE_SERVICE_BASE_URL: http://course-service:8083
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:18085:8085"
     depends_on:
@@ -218,6 +261,64 @@ services:
       nacos:
         condition: service_healthy
 
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${PROMETHEUS_HOST_PORT:-19090}:9090"
+    volumes:
+      - ./infrastructure/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - gateway-service
+      - auth-service
+      - student-service
+      - course-service
+      - enrollment-service
+      - enrollment-worker
+    networks:
+      - campus-enroll
+
+  grafana:
+    image: grafana/grafana:13.1.0
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: campus_admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${GRAFANA_HOST_PORT:-13000}:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./infrastructure/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infrastructure/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    networks:
+      - campus-enroll
+
+  k6:
+    image: grafana/k6:2.1.0
+    profiles:
+      - load-test
+    environment:
+      BASE_URL: ${K6_BASE_URL:-http://gateway-service:8080}
+      LOAD_RATE: ${LOAD_RATE:-5}
+      LOAD_DURATION: ${LOAD_DURATION:-10s}
+      LOAD_PREALLOCATED_VUS: ${LOAD_PREALLOCATED_VUS:-5}
+      LOAD_MAX_VUS: ${LOAD_MAX_VUS:-20}
+    volumes:
+      - ./load-tests:/scripts:ro
+    command: run /scripts/catalog-baseline.js
+    depends_on:
+      - gateway-service
+    networks:
+      - campus-enroll
+
 networks:
   campus-enroll:
     driver: bridge
@@ -227,3 +328,5 @@ volumes:
   redis-data:
   rabbitmq-data:
   nacos-data:
+  prometheus-data:
+  grafana-data:

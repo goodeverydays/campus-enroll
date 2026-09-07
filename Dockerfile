@@ -4,7 +4,8 @@ ARG MODULE
 WORKDIR /workspace
 COPY pom.xml ./
 COPY services ./services
-RUN mvn -B -ntp -pl "services/${MODULE}" -am clean package -DskipTests \
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn -B -ntp -pl "services/${MODULE}" -am clean package -DskipTests \
     && cp "services/${MODULE}"/target/*.jar /workspace/app.jar
 
 FROM eclipse-temurin:21-jre-noble

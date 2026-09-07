@@ -14,6 +14,9 @@ spring:
     username: ${MYSQL_APP_USER:campus_app}
     password: ${MYSQL_APP_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
+  flyway:
+    baseline-on-migrate: true
+    baseline-version: 1
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -25,7 +28,10 @@ spring:
     username: ${RABBITMQ_USER:campus_app}
     password: ${RABBITMQ_PASSWORD}
     virtual-host: ${RABBITMQ_VHOST:/campus-enroll}
-
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
 management:
   endpoints:
     web:
@@ -42,7 +48,17 @@ management:
 info:
   app:
     name: ${spring.application.name}
-    phase: 1-skeleton
+    phase: 6-reliable-messaging
+
+campus:
+  clients:
+    student-base-url: ${STUDENT_SERVICE_BASE_URL:http://localhost:8082}
+    course-base-url: ${COURSE_SERVICE_BASE_URL:http://localhost:8083}
+  messaging:
+    exchange: ${ENROLLMENT_EXCHANGE:campus.enrollment.exchange}
+    queue: ${ENROLLMENT_QUEUE:campus.enrollment.queue}
+    routing-key: ${ENROLLMENT_ROUTING_KEY:campus.enrollment.requested}
+    confirm-timeout: ${ENROLLMENT_CONFIRM_TIMEOUT:5s}
 
 springdoc:
   swagger-ui:
