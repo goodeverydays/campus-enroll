@@ -68,6 +68,14 @@ jobs:
           ./scripts/verify-phase6.ps1
           ./scripts/verify-phase7.ps1
 
+      - name: Upload Phase 7 baseline report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: phase7-k6-baseline-${{ github.run_id }}
+          path: load-tests/results/
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Capture container diagnostics
         if: failure()
         run: |

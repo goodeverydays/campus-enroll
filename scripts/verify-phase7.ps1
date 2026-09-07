@@ -154,12 +154,73 @@ $summaryPath = Join-Path $resultsDirectory 'catalog-summary.json'
     [Text.UTF8Encoding]::new($false)
 )
 $iterations = [int]$summary.metrics.iterations.values.count
+$requests = [int]$summary.metrics.http_reqs.values.count
+$checksRate = [double]$summary.metrics.checks.values.rate
 $p95Milliseconds = [double]$summary.metrics.http_req_duration.values.'p(95)'
 $failureRate = [double]$summary.metrics.http_req_failed.values.rate
+$droppedIterations = 0
+if ($null -ne $summary.metrics.PSObject.Properties['dropped_iterations']) {
+    $droppedIterations = [int]$summary.metrics.dropped_iterations.values.count
+}
 if ($iterations -lt 1) {
     throw 'k6 completed without executing any iterations.'
 }
+
+$gitCommit = 'unknown'
+try {
+    $candidateCommit = [string](& git rev-parse --short=12 HEAD 2>$null | Select-Object -First 1)
+    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($candidateCommit)) {
+        $gitCommit = $candidateCommit.Trim()
+    }
+} catch {
+    # Keep the result usable when the checkout is exported without Git metadata.
+}
+
+$runRecord = [pscustomobject][ordered]@{
+    schemaVersion = 1
+    experimentId = 'baseline'
+    repetition = 1
+    recordedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
+    gitCommit = $gitCommit
+    profile = 'catalog-read'
+    ratePerSecond = $LoadRate
+    duration = $LoadDuration
+    metrics = [pscustomobject][ordered]@{
+        iterations = $iterations
+        requests = $requests
+        checksRate = $checksRate
+        failureRate = $failureRate
+        droppedIterations = $droppedIterations
+        latencyMs = [pscustomobject][ordered]@{
+            average = [double]$summary.metrics.http_req_duration.values.avg
+            p50 = [double]$summary.metrics.http_req_duration.values.med
+            p90 = [double]$summary.metrics.http_req_duration.values.'p(90)'
+            p95 = $p95Milliseconds
+            p99 = [double]$summary.metrics.http_req_duration.values.'p(99)'
+            max = [double]$summary.metrics.http_req_duration.values.max
+        }
+    }
+    thresholds = [pscustomobject][ordered]@{
+        checksRateMinimum = 0.99
+        failureRateMaximum = 0.01
+        p95MillisecondsMaximum = 1500
+        passed = $true
+    }
+}
+$runRecordPath = Join-Path $resultsDirectory 'catalog-run.json'
+$runRecordJson = $runRecord | ConvertTo-Json -Depth 10
+[IO.File]::WriteAllText(
+    $runRecordPath,
+    $runRecordJson,
+    [Text.UTF8Encoding]::new($false)
+)
+& (Join-Path $PSScriptRoot 'summarize-phase7-results.ps1') `
+    -ResultFiles @($runRecordPath) `
+    -OutputDirectory $resultsDirectory `
+    -ReportName 'catalog-baseline'
+
 Write-Host ("K6 catalog baseline: iterations={0}, p95={1:N2}ms, failureRate={2:P2}" -f `
         $iterations, $p95Milliseconds, $failureRate)
-Write-Host "REPORT $summaryPath"
+Write-Host "RAW REPORT $summaryPath"
+Write-Host "NORMALIZED REPORT $runRecordPath"
 Write-Host 'Phase 7 observability and load baseline verification passed.'

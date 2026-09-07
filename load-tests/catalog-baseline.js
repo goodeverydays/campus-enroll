@@ -8,6 +8,7 @@ const preAllocatedVUs = Number(__ENV.LOAD_PREALLOCATED_VUS || Math.max(5, rate))
 const maxVUs = Number(__ENV.LOAD_MAX_VUS || Math.max(20, rate * 4));
 
 export const options = {
+  summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'max'],
   scenarios: {
     catalog_reads: {
       executor: 'constant-arrival-rate',

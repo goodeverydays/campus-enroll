@@ -219,6 +219,16 @@ Phase 7 可观测性与只读压测基线：
 `-LoadDuration` 调整强度；详细指标、阈值和实验记录要求见
 [docs/observability-and-load-testing.md](docs/observability-and-load-testing.md)。
 
+运行多档速率、每档重复三次的只读实验并生成 Markdown/CSV/JSON 汇总：
+
+```powershell
+.\scripts\run-phase7-experiment.ps1 -Rates 5,10,20 -Duration 30s -Repetitions 3
+```
+
+实验按速率顺序执行，结果保存在带 UTC 时间戳的
+`load-tests/results/experiments` 子目录中。CI 只运行轻量单次基线，并将完整结果作为
+保留 14 天的构建产物上传。
+
 需要验证基础设施重启恢复时运行：
 
 ```powershell
