@@ -75,7 +75,7 @@ jobs:
       - name: Start application stack
         run: docker compose up -d --build
 
-      - name: Verify runtime through Phase 7
+      - name: Verify runtime through Phase 8
         shell: pwsh
         run: |
           ./scripts/verify-phase1.ps1

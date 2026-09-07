@@ -77,12 +77,12 @@ if (-not $frontendReady) {
 }
 Write-Host 'FRONTEND Nginx health endpoint succeeded'
 
-$home = Invoke-WebRequest -Uri "$frontendBaseUrl/" -TimeoutSec 10
+$homePage = Invoke-WebRequest -Uri "$frontendBaseUrl/" -TimeoutSec 10
 $deepLink = Invoke-WebRequest -Uri "$frontendBaseUrl/courses/987654" -TimeoutSec 10
-if ($home.StatusCode -ne 200 `
-        -or $home.Content -notmatch '<div id="app"></div>' `
-        -or $home.Content -notmatch '/assets/index-' `
-        -or $deepLink.Content -ne $home.Content) {
+if ($homePage.StatusCode -ne 200 `
+        -or $homePage.Content -notmatch '<div id="app"></div>' `
+        -or $homePage.Content -notmatch '/assets/index-' `
+        -or $deepLink.Content -ne $homePage.Content) {
     throw 'Frontend production bundle or SPA deep-link fallback check failed.'
 }
 Write-Host 'FRONTEND production assets and SPA deep-link fallback succeeded'
