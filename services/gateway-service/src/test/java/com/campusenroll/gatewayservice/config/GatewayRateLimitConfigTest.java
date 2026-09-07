@@ -10,6 +10,7 @@ import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
 class GatewayRateLimitConfigTest {
@@ -18,7 +19,8 @@ class GatewayRateLimitConfigTest {
 
     @Test
     void TestEnrollmentKeyResolverAuthenticatedStudentUsesStableIdentity() {
-        var exchange = MockServerWebExchange.from(MockServerHttpRequest.post("/api/v1/enrollments"));
+        ServerWebExchange exchange = MockServerWebExchange.from(
+                MockServerHttpRequest.post("/api/v1/enrollments"));
         exchange = exchange.mutate().principal(Mono.just(new JwtAuthenticationToken(jwt(42L)))).build();
 
         String key = config.enrollmentKeyResolver().resolve(exchange).block();
